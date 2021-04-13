@@ -10,6 +10,8 @@
 #' Y <- iris[,5]
 #' 
 #' res <- ulda(X,Y)
+#' 
+#' @importFrom multivarious prep
 #' @export
 ulda <- function(X, Y,preproc=center(), mu=0, tol=1e-6) {
   Y <- as.factor(Y)
@@ -50,7 +52,14 @@ ulda <- function(X, Y,preproc=center(), mu=0, tol=1e-6) {
   #  W <- 
   #}
   
-  multivarious::discriminant_projector(v=vecs, preproc=procres, labels=Y, classes="ulda")
+  s <- Xp %*% vecs
+  
+  multivarious::discriminant_projector(v=vecs,
+                                       s=s,
+                                       sdev=apply(s,2,sd),
+                                       preproc=procres, 
+                                       labels=Y, 
+                                       classes="ulda")
   
 }
 
