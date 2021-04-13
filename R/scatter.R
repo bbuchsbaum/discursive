@@ -52,10 +52,10 @@ total_scatter <- function(X, mu) {
 #' @keywords internal
 between_class_scatter <- function(X, Y, mu) {
   p <- ncol(X)
-  Y <- droplevels(Y)
+  Y <- droplevels(as.factor(Y))
   levs <- levels(Y)
   
-  gmeans <- group_means(Y,X)
+  gmeans <- multivarious::group_means(Y,X)
   gmeans <- sweep(gmeans, 2, mu, "-")
   
   n <- tabulate(Y)

@@ -4,7 +4,7 @@
 #' @export
 olda <- function(X, Y, preproc=pass()) {
   res <- ulda(X,Y, preproc)
-  v <- components(res)
+  v <- coef(res)
   q <- qr(v)
   v <- qr.Q(q)
   
