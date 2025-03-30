@@ -18,7 +18,8 @@ dtrda(X, Y, preproc = multivarious::center(), d = 2, alpha)
 \item{alpha}{numeric, tuning parameter in \link{0,1} that controls the trade-off between between-class and within-class scatters.}
 }
 \value{
-A p x d matrix V whose columns are the discriminant vectors defining the subspace.
+An S3 object of class "discriminant_projector" containing the transformation matrix W,
+the transformed scores, and related metadata.
 }
 \description{
 Finds a low-dimensional discriminant subspace that maximizes

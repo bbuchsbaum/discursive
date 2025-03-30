@@ -15,10 +15,13 @@ Rows correspond to samples and columns to features.}
 \item{m}{The number of dimensions to reduce to, i.e., the number of columns in the projection matrix \eqn{W}.}
 }
 \value{
-A list containing:
+A \code{\link[multivarious]{discriminant_projector}} object with:
 \itemize{
-\item \code{W}: The projection matrix of size \code{d x m}.
-\item \code{X_reduced}: The transformed data of size \code{n x m}.
+\item \code{v}: The projection matrix \eqn{W} of size \code{d x m}.
+\item \code{s}: The transformed data \eqn{X W} of size \code{n x m}.
+\item \code{sdev}: The standard deviations of each column in \code{s}.
+\item \code{labels}: The original labels if provided (as a factor).
+\item \code{classes}: set to \code{"whm_lda"}.
 }
 }
 \description{
@@ -28,8 +31,37 @@ transformation \eqn{W} that improves class separability by minimizing the weight
 trace ratios derived from the between-class and within-class scatter matrices.
 }
 \details{
+The algorithm implemented here follows the approach described in Li et al. (2017),
+"Beyond Trace Ratio: Weighted Harmonic Mean of Trace Ratios for Multiclass Discriminant Analysis."
+The method proceeds as follows:
+\enumerate{
+\item Compute the between-class (\eqn{S_b}) and within-class (\eqn{S_w}) scatter matrices.
+\item Initialize a projection matrix \eqn{W} (of size \code{d x m}) randomly and ensure it is orthonormal.
+\item Iteratively update \eqn{W} by minimizing the weighted harmonic mean of trace ratios. This involves:
+\itemize{
+\item Evaluating pairs of classes and computing partial scatter matrices for each pair.
+\item Updating \eqn{W} by solving an eigen-decomposition problem derived from these intermediate matrices.
+}
+\item Stop when convergence is reached (based on a tolerance) or after a maximum number of iterations.
+}
+
+After convergence, \eqn{W} is returned in a standard \code{discriminant_projector} format, along with
+the reduced data \eqn{XW} in \code{s}.
+}
+\examples{
+\dontrun{
+data(iris)
+X <- as.matrix(iris[,1:4])
+labels <- iris[,5]
+proj <- whm_lda(X, labels, m=2)
+print(proj)
+# Now you can do:
+# new_data <- ...
+# projected <- project(proj, new_data)
+}
 
 }
 \references{
-Li, Zhihui, et al. "Beyond Trace Ratio: Weighted Harmonic Mean of Trace Ratios for Multiclass Discriminant Analysis." \emph{IEEE Transactions on Knowledge and Data Engineering (TKDE)}, 2017.
+Li, Zhihui, et al. "Beyond Trace Ratio: Weighted Harmonic Mean of Trace Ratios for Multiclass Discriminant Analysis."
+\emph{IEEE Transactions on Knowledge and Data Engineering (TKDE)}, 2017.
 }

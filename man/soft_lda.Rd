@@ -10,7 +10,8 @@ soft_lda(
   preproc = pass(),
   dp = min(dim(X)),
   di = dp - 1,
-  dl = ncol(C) - 1
+  dl = ncol(C) - 1,
+  alpha = 0
 )
 
 soft_lda(
@@ -19,23 +20,31 @@ soft_lda(
   preproc = pass(),
   dp = min(dim(X)),
   di = dp - 1,
-  dl = ncol(C) - 1
+  dl = ncol(C) - 1,
+  alpha = 0
 )
 }
 \arguments{
-\item{X}{A numeric matrix of size \code{n x d}, where \code{n} is the number of samples and \code{d} is the number of features.}
+\item{X}{A numeric matrix \(\mathrm{n \times d}\), rows = samples, columns = features.}
 
-\item{C}{A numeric matrix of size \code{n x c}, where \code{c} is the number of classes. Each element \code{C[i, j]} represents
-the membership weight of sample \code{i} to class \code{j}. Weights must be non-negative, and \code{nrow(C) = nrow(X)}.}
+\item{C}{A numeric matrix \(\mathrm{n \times c}\) of soft memberships.
+\code{C[i, j]} = weight of sample \code{i} for class \code{j}.
+Must be \(\ge 0\); row sums can be any positive value
+(if \(\sum_j C\link{i,j} = 1\), each row is a probability distribution).}
 
-\item{preproc}{A preprocessing function from \code{multivarious} such as \code{center()} or \code{pass()}. Defaults to \code{pass()},
-which does no preprocessing.}
+\item{preproc}{A \code{pre_processor} from \pkg{multivarious}, e.g. \code{center()} or \code{pass()}.
+Defaults to \code{pass()} (no centering).}
 
-\item{dp}{Integer. The number of principal components to retain in the initial PCA reduction. Default is \code{min(dim(X))}.}
+\item{dp}{Integer. Number of principal components to keep in the first PCA step.
+Defaults to \code{min(dim(X))}.}
 
-\item{di}{Integer. The dimension of the within-class projection. Default is \code{dp - 1}.}
+\item{di}{Integer. Dimension of the \emph{within-class} subspace. Default \code{dp - 1}.}
 
-\item{dl}{Integer. The dimension of the between-class projection. Default is \code{ncol(C) - 1}, which is one less than the number of classes.}
+\item{dl}{Integer. Dimension of the final subspace for \emph{between-class} separation.
+Default \code{ncol(C) - 1}.}
+
+\item{alpha}{A numeric ridge parameter (\(\ge 0\)). If \code{alpha > 0}, we add \(\alpha I\)
+to \(\widetilde{S}_w\) to ensure invertibility. Default \code{0}.}
 
 \item{PL}{A numeric matrix n x K of plausibility values for each class and instance.}
 
@@ -58,49 +67,66 @@ A list with:
 \item{loglik}{Final log evidential likelihood}
 \item{iter}{Number of iterations performed}
 
-An object of class \code{projector}, compatible with \code{multivarious}, containing:
+A \code{\link[multivarious]{discriminant_projector}} object with subclass
+\code{"soft_lda"} containing:
 \itemize{
-\item \code{preproc}: The preprocessing object used.
-\item \code{ncomp}: The number of components in the final projection.
-\item \code{v}: The final projection matrix of size \code{d x dl}.
-\item \code{classes}: "sl_lda" indicating the type of projector.
+\item \code{v} ~ The \(\mathrm{(d \times dl)}\) final projection matrix.
+\item \code{s} ~ The \(\mathrm{(n \times dl)}\) projected scores of the training set.
+\item \code{sdev} ~ The std dev of each dimension in \code{s}.
+\item \code{labels} ~ Currently set to \code{colnames(C)} (or \code{NULL}).
+\item \code{preproc} ~ The preprocessing object used.
+\item \code{classes} ~ A string \code{"soft_lda"}.
 }
 }
 \description{
 Fits a Linear Discriminant Analysis (LDA) model using soft labels
 and the Evidential EM (E²M) algorithm, with improved robustness and optional regularization.
 
-This function implements a soft-label variant of Linear Discriminant Analysis (LDA), as described in related literature
-on semi-supervised dimensionality reduction. Instead of assuming hard class assignments for each sample, it allows for
-each sample to have fractional (soft) memberships across multiple classes. This approach can be beneficial when class
-labels are uncertain, noisy, or multi-labeled.
+This function implements a \emph{soft-label} variant of Linear Discriminant Analysis (LDA),
+following the approach described in:
 }
 \details{
-The procedure integrates a PCA-based dimensionality reduction step (to \code{dp} components) followed by a two-step LDA-like
-projection. The final result is a linear projector that maps the data into a lower-dimensional space maximizing between-class
-variation and minimizing within-class variation under the soft-label regime.
+Zhao, M., Zhang, Z., Chow, T.W.S., & Li, B. (2014).
+"A general soft label based Linear Discriminant Analysis for semi-supervised dimensionality reduction."
+\emph{Neurocomputing, 135}, 250-264.
 
-The \code{soft_lda} function extends traditional LDA to the case where class assignments are soft. It follows these steps:
+Instead of hard (0/1) labels, each sample can have fractional memberships (soft labels) across
+multiple classes. These memberships are encoded in a matrix \code{C}, typically obtained via
+a label-propagation or fuzzy labeling step. SL-LDA uses these soft memberships to form
+generalized scatter matrices \(\widetilde{S}_w\) and \(\widetilde{S}_b\), then solves
+an LDA-like dimension-reduction problem in a PCA subspace via a \emph{two-step} approach:
+
 \enumerate{
-\item \strong{Preprocessing}: Apply \code{preproc} to the data \code{X}.
-\item \strong{PCA Projection}: Reduce the dimensionality of \code{X} to \code{dp} components.
-\item \strong{Construct Weight Matrices}: The matrix \code{C} defines soft memberships. From \code{C}, we derive:
+\item \strong{Preprocessing}:
+Apply a \code{preproc} function (e.g. \code{center()}) to the data \code{X}.
+\item \strong{PCA}:
+Project the data onto the top \code{dp} principal components (to handle rank deficiency).
+\item \strong{Compute Soft-Label Scatter} in the PCA space:
 \itemize{
-\item \code{E}: A diagonal matrix with row sums of \code{C}.
-\item \code{G}: A diagonal matrix with column sums of \code{C}, representing class weights.
-\item \code{F}: The transpose of \code{C}, so each row corresponds to a class.
+\item Let \(\mathbf{F} = \mathbf{C}^\top\) be size \(\mathrm{c \times n}\).
+\item Let \(\mathbf{E} = \mathrm{diag}(\text{rowSums}(\mathbf{C}))\) (size \(\mathrm{n \times n}\)).
+\item Let \(\mathbf{G} = \mathrm{diag}(\text{colSums}(\mathbf{C}))\) (size \(\mathrm{c \times c}\)).
+\item Form \(\widetilde{S}_w = X_p^\top ( E - F^\top G^{-1} F ) X_p + \alpha I\) (within-class),
+and \(\widetilde{S}_b = X_p^\top \bigl(F^\top G^{-1}F - \tfrac{E e e^\top E}{e\,E\,e^\top}\bigr) X_p\) (between-class).
 }
-\item \strong{Scatter Matrices}: Using the weighted assignments, within-class scatter (\code{Sw}) and between-class scatter (\code{Sb}) are computed.
-\item \strong{Intermediate Projection (di)}: Perform an eigen-decomposition on \code{Sw} to get a \code{di}-dimensional subspace that captures within-class structure.
-\item \strong{Final Projection (dl)}: Project class means into the \code{di}-dim space, then run PCA to extract the top \code{dl} directions that best discriminate classes.
-\item \strong{Combine Projections}: Multiply the PCA projection \code{proj_dp}, the \code{di}-dimension projection \code{proj_di}, and the \code{dl}-dimension projection \code{proj_dl} to get the final projection.
+\item \strong{Within-class projection} (\code{di}):
+Partially diagonalize \(\widetilde{S}_w\).
+In code, we extract \code{di} eigenvectors.
+(\emph{Note}: Some references keep the \emph{largest} eigenvalues, others the \emph{smallest}.)
+\item \strong{Between-class projection} (\code{dl}):
+Project the (soft) class means into the \code{di}-dim subspace, then run a small PCA
+for dimension \code{dl}.
+\item \strong{Combine}:
+Multiply \(\mathrm{(d \times dp)} \cdot (\mathrm{dp \times di}) \cdot (\mathrm{di \times dl})\)
+to get the final \(\mathrm{(d \times dl)}\) projection matrix.
 }
 
-This approach is influenced by methods described in:
-\itemize{
-\item \emph{A general soft label based Linear Discriminant Analysis for semi-supervised dimensionality reduction}
-\item \emph{A weighted linear discriminant analysis framework for multi-label feature extraction}
-}
+In typical references, one might pick the \emph{largest} eigenvalues of \(\widetilde{S}_w\)
+for stable inversion, but certain versions (like Null-LDA) use the \emph{smallest} eigenvalues.
+Adjust the code in \code{RSpectra::eigs_sym()} accordingly if you prefer a different variant.
+
+If you want to confirm \(\widetilde{S}_t = \widetilde{S}_w + \widetilde{S}_b\) numerically,
+you can define a helper function for \(\widetilde{S}_t\) and compare it to \(\widetilde{S}_w + \widetilde{S}_b\).
 }
 \examples{
 set.seed(123)
@@ -130,6 +156,7 @@ Quost, B., Denoeux, T., Li, S. (2017). Parametric classification with soft label
 using the Evidential EM algorithm. Advances in Data Analysis and Classification,
 11(4), 659-690.
 
-For example reference, see:
-\url{https://paperpile.com/app/p/03eb8cb3-2326-0cc5-a440-02c6aa543bf3}
+Zhao, M., Zhang, Z., Chow, T.W.S., & Li, B. (2014).
+"A general soft label based Linear Discriminant Analysis for semi-supervised dimensionality reduction."
+\emph{Neurocomputing, 135}, 250-264.
 }

@@ -11,10 +11,18 @@ olda(X, Y, preproc = pass())
 
 \item{Y}{A factor or numeric vector representing class labels for each sample.}
 
-\item{preproc}{A preprocessing function to apply to the data. Default is no preprocessing.}
+\item{preproc}{A preprocessing function (from \code{multivarious}) to apply to the data.
+Default is \code{pass()} (no preprocessing).}
 }
 \value{
-An object of class \code{projector} containing the orthogonal projection matrix and additional information about the projection.
+A \code{discriminant_projector} object containing:
+\itemize{
+\item \code{v}    : The orthogonal loadings (projection matrix).
+\item \code{s}    : The projected scores.
+\item \code{sdev} : Standard deviations of the score dimensions.
+\item \code{labels}: The class labels.
+\item \code{preproc}: The preprocessing object.
+}
 }
 \description{
 This function performs Orthogonal Linear Discriminant Analysis (OLDA) on a given dataset.
@@ -26,16 +34,20 @@ The function proceeds through the following steps:
 \enumerate{
 \item \strong{ULDA Projection}: The data is first projected using Uncorrelated Linear Discriminant Analysis (ULDA).
 \item \strong{QR Decomposition}: The projection matrix from ULDA is then orthogonalized using QR decomposition.
-\item \strong{Final Projection}: The orthogonalized projection matrix is returned.
+\item \strong{Final Projection}: The orthogonalized projection matrix is applied to the (preprocessed) data,
+and a \code{discriminant_projector} object is returned.
 }
 }
 \examples{
+\dontrun{
 data(iris)
 X <- as.matrix(iris[, 1:4])
 Y <- iris[, 5]
 res <- olda(X, Y)
+print(res)
+}
 
 }
 \seealso{
-\code{\link{ulda}}, \code{\link{qr}}, \code{\link{qr.Q}}
+\code{\link{ulda}}, \code{\link{qr}}, \code{\link{qr.Q}}, \code{\link[multivarious]{discriminant_projector}}
 }

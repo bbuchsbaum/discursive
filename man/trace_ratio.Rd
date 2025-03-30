@@ -2,14 +2,20 @@
 % Please edit documentation in R/trace_ratio.R
 \name{trace_ratio}
 \alias{trace_ratio}
-\title{Trace Ratio Optimization}
+\title{Trace Ratio Optimization Returning a Discriminant Projector}
 \usage{
-trace_ratio(A, B, ncomp = 2, eps = 1e-06, maxiter = 100)
+trace_ratio(A, B, X = NULL, y = NULL, ncomp = 2, eps = 1e-06, maxiter = 100)
 }
 \arguments{
 \item{A}{A symmetric numeric matrix representing the "numerator" scatter matrix.}
 
 \item{B}{A symmetric numeric matrix representing the "denominator" scatter matrix.}
+
+\item{X}{(optional) A numeric matrix \eqn{(n \times d)} of the original data.
+If provided, we compute the training scores \eqn{X \times V} in the final projector.}
+
+\item{y}{(optional) A vector of length \eqn{n} of class labels. If provided, stored in
+the projector's \code{labels} field.}
 
 \item{ncomp}{An integer specifying the number of components (dimension of the
 subspace) to extract. Default is 2.}
@@ -21,12 +27,14 @@ the change in the trace ratio (\eqn{\rho}) is less than \code{eps}. Default is 1
 optimization. Default is 100.}
 }
 \value{
-A list with two elements:
+A \code{\link[multivarious]{discriminant_projector}} object, with:
 \itemize{
-\item \code{vectors}: A matrix whose columns are the \eqn{ncomp} eigenvectors
+\item \code{v}: A matrix whose columns are the \eqn{ncomp} vectors
 corresponding to the subspace that maximizes the trace ratio criterion.
-\item \code{values}: A numeric vector of length \eqn{ncomp} containing the
-individual ratios \eqn{(v_i^T A v_i) / (v_i^T B v_i)} for each selected vector \eqn{v_i}.
+\item \code{s}: If \code{X} is given, the training scores (\eqn{X \times v}).
+\item \code{sdev}: The standard deviations of columns in \code{s}.
+\item \code{labels}: set to \code{y} if provided, otherwise \code{NULL}.
+\item \code{classes}: A character string \code{"trace_ratio"}.
 }
 }
 \description{
@@ -41,20 +49,52 @@ projection matrix \eqn{V} (with orthonormal columns) that maximizes:
 \deqn{\mathrm{trace}(V^T A V) / \mathrm{trace}(V^T B V).}
 This is solved iteratively using eigen decomposition methods.
 
+\strong{What if you want a \code{discriminant_projector} for typical usage?}
+If you provide \code{X} (the original data) and optional \code{y} (class labels),
+this function will build a \code{discriminant_projector} object, storing:
+\itemize{
+\item \code{v} ~ the \eqn{n x p} projection vectors (the subspace),
+\item \code{s} ~ the training scores (\eqn{X \times v}),
+\item \code{sdev} ~ standard deviations of each dimension in \code{s},
+\item \code{labels} ~ set to \code{y} if provided,
+\item \code{classes} ~ set to \code{"trace_ratio"}.
+}
+If \code{X} is \code{NULL}, we just return a projector with \code{v} but no training scores.
+
 This function solves a generalized eigenvalue-like problem iteratively, updating
 the projection \eqn{V} until convergence. It uses \code{PRIMME::eigs_sym} for
 eigen decompositions at each step. The approach is inspired by the trace ratio
 criterion found in linear discriminant analysis and related dimension reduction
 techniques.
+
+\strong{Algorithm}:
+\enumerate{
+\item Initialize \eqn{V} randomly (size \eqn{n \times ncomp}).
+\item At iteration \eqn{t}:
+\itemize{
+\item Compute \eqn{\rho_t = trace(V^T A V) / trace(V^T B V)}.
+\item Form \eqn{M = A - \rho_t B}.
+\item Eigen-decompose \eqn{M} to get top \eqn{ncomp} eigenvectors => new \eqn{V}.
+}
+\item Repeat until \eqn{|\rho_{t+1} - \rho_t| < eps} or maxiter is reached.
+}
 }
 \examples{
+\dontrun{
 data(iris)
 X <- scale(iris[,1:4])
-Y <- iris[,5]
-A <- between_class_scatter(X, Y)
-B <- within_class_scatter(X, Y)
-result <- trace_ratio(A, B, ncomp = 3)
-str(result)
+y <- iris[,5]
+
+# Build scatter matrices (a typical case in LDA)
+A <- between_class_scatter(X, y)
+B <- within_class_scatter(X, y)
+
+# Solve trace ratio with 3 components, storing training scores
+proj <- trace_ratio(A, B, X = X, y = y, ncomp = 3)
+print(proj)
+
+# You can now project new data with project(proj, newdata), etc.
+}
 
 }
 \seealso{

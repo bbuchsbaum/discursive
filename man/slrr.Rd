@@ -2,14 +2,125 @@
 % Please edit documentation in R/slrr.R
 \name{slrr}
 \alias{slrr}
-\title{data(iris)
-X <- as.matrix(iris\link{,1:4})
-Y <- iris\link{,5}}
+\title{Sparse or Ridge Low-Rank Regression (SLRR / LRRR)}
 \usage{
-slrr(X, Y, s, lambda = 0.001)
+slrr(
+  X,
+  Y,
+  s,
+  lambda = 0.001,
+  penalty = c("ridge", "l21"),
+  max_iter = 50,
+  tol = 1e-06,
+  preproc = center(),
+  verbose = FALSE
+)
+}
+\arguments{
+\item{X}{A numeric matrix \(\mathrm{n \times d}\). Rows = samples, columns = features.}
+
+\item{Y}{A factor or numeric vector of length \(\mathrm{n}\), representing class labels.
+If numeric, it will be converted to a factor.}
+
+\item{s}{The rank (subspace dimension) of the low-rank coefficient matrix \(\mathbf{W}\).
+Must be \(\le\) the number of classes - 1, typically.}
+
+\item{lambda}{A numeric penalty parameter (default 0.001).}
+
+\item{penalty}{Either \code{"ridge"} for Low-Rank Ridge Regression (LRRR) or
+\code{"l21"} for Sparse Low-Rank Regression (SLRR).}
+
+\item{max_iter}{Maximum number of iterations for the \code{"l21"} iterative algorithm.
+Ignored if \code{penalty="ridge"} (no iteration needed).}
+
+\item{tol}{Convergence tolerance for the iterative reweighting loop if \code{penalty="l21"}.}
+
+\item{preproc}{A preprocessing function/object from \pkg{multivarious}, default \code{center()},
+to center (and possibly scale) \code{X} before regression.}
+
+\item{verbose}{Logical, if \code{TRUE} prints iteration details for the \code{"l21"} case.}
+}
+\value{
+A \code{\link[multivarious]{discriminant_projector}} object with subclass \code{"slrr"} that contains:
+\itemize{
+\item \code{v} : The \(\mathrm{d \times c}\) final regression matrix mapping original features to class-space
+(\(\mathbf{W}\) in the paper). Here, \(\mathrm{c}\) = number of classes.
+\item \code{s} : The \(\mathrm{n \times c}\) score matrix (\(\mathbf{X}_\text{proc} \times \mathbf{W}\)).
+\item \code{sdev} : Standard deviations per column of \code{s}.
+\item \code{labels} : The factor labels \code{Y}.
+\item \code{preproc} : The preprocessing object used.
+\item \code{classes} : Will include \code{"slrr"} (and possibly \code{"ridge"} or \code{"l21"}).
+\item \code{A} : The learned subspace (optional debug). \(\mathrm{d \times s}\).
+\item \code{B} : The learned regression in subspace (optional debug). \(\mathrm{s \times c}\).
+}
 }
 \description{
+Implements a low-rank regression approach from:
+\emph{"On The Equivalent of Low-Rank Regressions and Linear Discriminant Analysis Based Regressions"}
+by Cai, Ding, and Huang (2013). This framework unifies:
+\itemize{
+\item \strong{Low-Rank Ridge Regression (LRRR)}: when \code{penalty="ridge"},
+adds a Frobenius norm penalty \(\|\mathbf{A B}\|\emph{F^2\).
+\item \strong{Sparse Low-Rank Regression (SLRR)}: when \code{penalty="l21"},
+uses an \(\ell}{2,1}\) norm for row-sparsity. An iterative reweighting
+approach is performed to solve the non-smooth objective.
+}
+}
+\details{
+In both cases, the model is equivalent to \emph{performing LDA-like dimensionality reduction}
+(finding a subspace \(\mathbf{A}\) of rank \code{s}) and then doing a
+\emph{regularized regression} (\(\mathbf{B}\)) in that subspace. The final
+regression matrix is \(\mathbf{W} = \mathbf{A}\,\mathbf{B}\), which has rank
+at most \code{s}.
+
+\strong{1) Build Soft-Label Matrix:}
+We convert \code{Y} to a factor, then create an indicator matrix \(\mathbf{G}\)
+with \code{nrow} = \code{n}, \code{ncol} = \code{c}, normalizing each column to sum to 1
+(akin to the "normalized training indicator" in the paper).
+
+\strong{2) LDA-Like Subspace:}
+We compute total scatter \(\mathbf{S}_t\) and between-class scatter \(\mathbf{S}_b\),
+then solve \(\mathbf{M} = \mathbf{S}_t^{-1} \mathbf{S}_b\) for its top \code{s} eigenvectors
+\(\mathbf{A}\). This yields the rank-$s$ subspace.
+
+\strong{3) Regression in Subspace:}
+Let \(\mathbf{X}^\top \mathbf{X} + \lambda \mathbf{D}\) be the (regularized) covariance term
+to invert, where:
+\itemize{
+\item If \code{penalty="ridge"}, \(\mathbf{D} = \mathbf{I}\).
+\item If \code{penalty="l21"}, we iterate a \emph{reweighted} diagonal \(\mathbf{D}\)
+to encourage row-sparsity (cf. the paper's Eq. (23-30)).
+}
+
+Then we solve \(\mathbf{B} = \link[=\\mathbf{A}^\\top(\\mathbf{X}\\mathbf{X}^\\top + \\lambda\\mathbf{D})\\mathbf{A}]{\mathbf{A}^\top(\mathbf{X}\mathbf{X}^\top + \lambda\mathbf{D})\mathbf{A}}^{-1}
+\link[=\\mathbf{A}^\\top\\mathbf{X}\\mathbf{G}]{\mathbf{A}^\top\mathbf{X}\mathbf{G}}.\)
+
+Finally, \(\mathbf{W} = \mathbf{A}\mathbf{B}\). We project the data \(\mathbf{X}\emph{\text{proc}\)
+to get scores \(\mathbf{X}}\text{proc}\mathbf{W}\).
+
+If \code{penalty="l21"}, we repeat the sub-steps for \(\mathbf{A},\mathbf{B}\) while updating
+\(\mathbf{D}\) from the row norms of \(\mathbf{W}=\mathbf{A}\mathbf{B}\) in each iteration.
+This leads to a row-sparse solution.
+}
+\examples{
+\dontrun{
 data(iris)
-X <- as.matrix(iris\link{,1:4})
-Y <- iris\link{,5}
+X <- as.matrix(iris[, 1:4])
+Y <- iris[, 5]
+
+# Example 1: Low-Rank Ridge Regression (LRRR) with s=2, lambda=0.01
+fit_lrrr <- slrr(X, Y, s=2, lambda=0.01, penalty="ridge")
+print(fit_lrrr)
+
+# Example 2: Sparse Low-Rank Regression (SLRR) with l21 penalty
+# and iterative approach, s=2, lambda=0.01
+fit_slrr <- slrr(X, Y, s=2, lambda=0.01, penalty="l21", max_iter=20, tol=1e-5)
+print(fit_slrr)
+}
+}
+\references{
+\itemize{
+\item Cai, X., Ding, C., & Huang, H. (2013). "On The Equivalent of Low-Rank Regressions and
+Linear Discriminant Analysis Based Regressions." \emph{KDD'13}.
+}
 }
