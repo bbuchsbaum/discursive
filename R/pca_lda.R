@@ -31,7 +31,6 @@
 #'   \item \strong{Preprocessing}: The data \code{X} is preprocessed using the specified \code{preproc} function.
 #'   \item \strong{PCA Projection}: The preprocessed data is projected onto the first \code{dp} principal components.
 #'   \item \strong{Within-Class Scatter}: The within-class scatter matrix \code{Sw} is computed in the PCA-transformed space.
-#'   \item \strong{Between-Class Scatter}: The between-class scatter matrix \code{Sb} is computed in the PCA-transformed space.
 #'   \item \strong{Within-Class Projection}: The eigen-decomposition of \code{Sw} is used to derive an intermediate projection of dimension \code{di}.
 #'   \item \strong{Between-Class Projection}: The projected group means are subjected to PCA to derive a final projection of dimension \code{dl}.
 #'   \item \strong{Final Projection}: The data is ultimately projected onto the \code{dl}-dimensional subspace that maximizes class separation.
@@ -68,9 +67,8 @@ pca_lda <- function(X, Y, preproc = center(), dp = min(dim(X)), di = dp - 1, dl 
   proj_dp <- pca_basis$v    # d x dp loadings
   Xpca <- scores(pca_basis) # n x dp scores
   
-  # Compute scatter matrices in PCA space
+  # Compute within-class scatter matrix in PCA space
   Sw <- within_class_scatter(Xpca, Y) # dp x dp
-  Sb <- between_class_scatter(Xpca, Y, colMeans(Xpca)) # dp x dp
   
   # Compute group means in PCA space
   gmeans <- group_means(Y, Xpca) # G x dp (G = number of groups)
@@ -78,7 +76,9 @@ pca_lda <- function(X, Y, preproc = center(), dp = min(dim(X)), di = dp - 1, dl 
   # Within-class projection (di dimensions)
   E_i <- RSpectra::eigs_sym(Sw, k = di)
   # Construct the within-class projection (dp x di)
-  proj_di <- E_i$vectors %*% diag(1 / sqrt(E_i$values))
+  # Add a small tolerance to avoid division by zero when eigenvalues are
+  # numerically close to zero
+  proj_di <- E_i$vectors %*% diag(1 / sqrt(pmax(E_i$values, .Machine$double.eps)))
   
   # Project group means using the within-class projection
   gmeans_proj <- gmeans %*% proj_di # G x di
