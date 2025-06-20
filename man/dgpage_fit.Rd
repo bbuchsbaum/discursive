@@ -13,7 +13,8 @@ dgpage_fit(
   beta = 1e-05,
   maxiter = 20,
   tol = 1e-05,
-  verbose = TRUE
+  verbose = TRUE,
+  seed = NULL
 )
 }
 \arguments{
@@ -35,6 +36,7 @@ dgpage_fit(
 \item{tol}{Convergence tolerance on the objective value.}
 
 \item{verbose}{Whether to print progress information.}
+\item{seed}{Optional integer seed controlling the random initialization.}
 }
 \value{
 A list with:

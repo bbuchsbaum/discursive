@@ -26,3 +26,8 @@ matrix \eqn{D} is:
 }
 where \eqn{\rho_i^+} and \eqn{\rho_i^-} follow Eqs. (5) and (6) \strong{but} with \eqn{q=0}.
 }
+\details{
+All pairwise distances are computed explicitly, leading to an
+\eqn{O(n^2)} algorithm. Large datasets may require a more efficient
+implementation.
+}

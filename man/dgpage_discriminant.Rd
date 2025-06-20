@@ -15,7 +15,8 @@ dgpage_discriminant(
   maxiter = 20,
   tol = 1e-05,
   verbose = TRUE,
-  q = 1.5
+  q = 1.5,
+  seed = NULL
 )
 }
 \arguments{
@@ -35,6 +36,8 @@ dgpage_discriminant(
 
 \item{q}{If \code{S} or \code{D} is \code{NULL}, we use \code{q} in
 \code{\link{compute_similarity_graph}}. Default 1.5.}
+
+\item{seed}{Optional seed passed to \code{dgpage_fit} for reproducibility.}
 }
 \value{
 An object of class \code{c("dgpage_projector","discriminant_projector","bi_projector",...)}

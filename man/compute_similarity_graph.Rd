@@ -29,3 +29,8 @@ matrix \eqn{S} is computed as:
 where \eqn{\tau_i^+} and \eqn{\tau_i^-} (Eqs. (5) and (6)) characterize the intra- and inter-class
 geometric distributions for sample \eqn{x_i}, respectively.
 }
+\details{
+This implementation materializes all pairwise distances and thus has
+\eqn{O(n^2)} computational complexity. For very large datasets you may
+want to implement a more efficient version, e.g., using Rcpp.
+}
