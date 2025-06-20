@@ -1,8 +1,18 @@
+#' Moving Window Total Scatter
+#'
+#' Computes an average total scatter matrix over a sliding window of columns.
+#'
+#' @param X Numeric matrix where columns correspond to variables.
+#' @param window Odd integer specifying the width of the moving window (in columns).
+#'               Must be at least 3 and less than `ncol(X)`.
+#'
+#' @return A numeric matrix containing the mean total scatter across all windows.
+#' @keywords internal
 moving_scatter <- function(X, window) {
   window <- as.integer(window)
   assertthat::assert_that(window < ncol(X))
   assertthat::assert_that(window >= 3)
-  assertthat::assert_that(window %% 2 != 0, msg="`window` must be an odd number >= 3")
+  assertthat::assert_that(window %% 2 != 0, msg = "`window` must be an odd number >= 3")
   
   halfwindow <- (window - 1) / 2
   # Number of windows we will consider
@@ -81,16 +91,8 @@ pooled_scatter <- function(X, Y) {
 #' @return A numeric (d x d) total scatter matrix.
 #' @keywords internal
 total_scatter <- function(X, mu) {
-  # A more efficient R-way: St <- crossprod(sweep(X, 2, mu))
-  # But the loop is correct, just less efficient.
-  
-  p <- ncol(X)
-  St <- matrix(0, nrow = p, ncol = p)
-  for (i in 1:nrow(X)) {
-    delta <- X[i, ] - mu
-    St <- St + tcrossprod(delta)
-  }
-  St
+  # Vectorised computation of the total scatter matrix
+  crossprod(sweep(X, 2, mu))
 }
 
 
@@ -134,13 +136,14 @@ within_class_scatter <- function(X, Y) {
 #' @return A numeric (d x d) between-class scatter matrix for the two groups.
 #' @keywords internal
 binary_between_scatter <- function(X, id1, id2) {
-  gmean <- colMeans(X[c(id1, id2), , drop = FALSE])
-  
   n1 <- length(id1)
   n2 <- length(id2)
-  
+
   m1 <- colMeans(X[id1, , drop = FALSE])
   m2 <- colMeans(X[id2, , drop = FALSE])
+
+  # more efficient grand mean using class means
+  gmean <- (n1 * m1 + n2 * m2) / (n1 + n2)
   
   v1 <- (m1 - gmean)
   v2 <- (m2 - gmean)
