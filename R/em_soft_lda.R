@@ -44,9 +44,9 @@
 #'     PL[i,Y[i]] <- 1
 #'   }
 #' }
-#' res <- soft_lda(X, PL, verbose=TRUE)
+#' res <- em_soft_lda(X, PL, verbose=TRUE)
 #' str(res)
-soft_lda <- function(X, PL, max_iter=100, tol=1e-6, n_starts=5, reg=1e-9, verbose=FALSE) {
+em_soft_lda <- function(X, PL, max_iter=100, tol=1e-6, n_starts=5, reg=1e-9, verbose=FALSE) {
   # Basic checks
   if(!is.matrix(X)) stop("X must be a matrix.")
   if(!is.matrix(PL)) stop("PL must be a matrix.")
@@ -107,9 +107,6 @@ soft_lda <- function(X, PL, max_iter=100, tol=1e-6, n_starts=5, reg=1e-9, verbos
         S <- S + t(diff)*zeta[,k] %*% diff
       }
       Sigma <- S/n + reg*diag(d)
-      
-      ## suggested by o1 code review:
-      ##Sigma <- S/sum(nk) + reg*diag(d)
       
       # Check numerical stability:
       # If Sigma not invertible, increase reg
@@ -221,7 +218,7 @@ soft_lr <- function(X, PL, max_iter=100, tol=1e-6, lambda=1e-5, n_starts=3, verb
       # Hessian: block structure
       # H = sum_i x_i^T R_i x_i, 
       # R_i = diag(p_i) - p_i p_i^T for i-th obs (restricted to first K-1 classes)
-      (d1 <- (d+1)*(K-1)) # dimension of vectorized beta
+      d1 <- (d + 1) * (K - 1) # dimension of vectorized beta
       H <- matrix(0, d1, d1)
       # build Hessian:
       for (i in 1:n) {
@@ -242,20 +239,17 @@ soft_lr <- function(X, PL, max_iter=100, tol=1e-6, lambda=1e-5, n_starts=3, verb
       
       # Line search:
       # Newton direction:
-      delta <- tryCatch(solve(H, vec_grad), error=function(e) {
-        # If solve fails, add more ridge
-        temp_lambda <- lambda*10
+      delta <- tryCatch(solve(H, vec_grad), error = function(e) {
+        # If solve fails, progressively add more ridge until invertible
+        temp_lambda <- lambda * 10
         for (rtry in 1:5) {
-          H2 <- H - diag(lambda, d1) # try increasing lambda
-          if (rtry>1) H2 <- H2 - diag(temp_lambda, d1)
-          test <- try(solve(H2,vec_grad),silent=TRUE)
-          if (!inherits(test,"try-error")) {
+          H2 <- H - diag(temp_lambda, d1)
+          test <- try(solve(H2, vec_grad), silent = TRUE)
+          if (!inherits(test, "try-error")) {
             return(test)
-          } else {
-            temp_lambda <- temp_lambda*10
           }
+          temp_lambda <- temp_lambda * 10
         }
-        # If still fails:
         stop("Cannot invert Hessian even after increasing ridge.")
       })
       
