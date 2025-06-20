@@ -8,7 +8,7 @@
 #' @param X A numeric matrix of size \code{n x d}, where \code{n} is the number of samples (rows)
 #'          and \code{d} is the number of features (columns).
 #' @param Y A factor or numeric vector of length \code{n} representing class labels for each sample.
-#'          If numeric, it will be converted to a factor.
+#'          Its length must match the number of rows of \code{X}. If numeric, it will be converted to a factor.
 #' @param preproc A preprocessing function from the \code{multivarious} package, such as \code{center()} or \code{scale()},
 #'        to apply to the data before ULDA. The default is \code{center()}, which centers the columns of \code{X}.
 #' @param mu A regularization parameter (currently unused, but included for extensibility). Default is 0.
@@ -52,15 +52,20 @@
 #' res <- ulda(X, Y)
 #' }
 ulda <- function(X, Y, preproc = center(), mu = 0, tol = 1e-6) {
-  # Ensure Y is a factor
+  # Basic argument checks
+  if (!is.matrix(X)) {
+    X <- as.matrix(X)
+  }
+  if (nrow(X) != length(Y)) {
+    stop("'Y' must have the same length as the number of rows in 'X'.")
+  }
   Y <- as.factor(Y)
-  
+
   # Preprocess data
   procres <- multivarious::prep(preproc)
   Xp <- init_transform(procres, X)
-  
-  levs <- levels(Y)
-  nc <- length(levs)
+
+  nc <- nlevels(Y)
   
   # Class probabilities and means
   cprobs <- table(Y) / length(Y)
@@ -80,14 +85,16 @@ ulda <- function(X, Y, preproc = center(), mu = 0, tol = 1e-6) {
   keep <- which(svd_ht$d > tol)
   
   # Transform Hb using the pseudoinverse of Ht
-  B <- diag(1 / svd_ht$d[keep]) %*% t(svd_ht$u[, keep]) %*% Hb
+  Ut_scaled <- t(sweep(svd_ht$u[, keep, drop = FALSE], 2, svd_ht$d[keep], "/"))
+  B <- Ut_scaled %*% Hb
   
   # SVD of B to find discriminant directions
   svd_B <- svd(B)
   keep_b <- which(svd_B$d > tol)
   
   # Compute final projection vectors
-  vecs <- svd_ht$u[, keep, drop = FALSE] %*% diag(1 / svd_ht$d[keep]) %*% svd_B$u[, keep_b, drop = FALSE]
+  U_scaled <- sweep(svd_ht$u[, keep, drop = FALSE], 2, svd_ht$d[keep], "/")
+  vecs <- U_scaled %*% svd_B$u[, keep_b, drop = FALSE]
   
   # Project the data
   s <- Xp %*% vecs
