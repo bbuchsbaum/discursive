@@ -73,12 +73,9 @@
 #' @param tol Stopping threshold for change in trace ratio; default = 1e-6.
 #' @param maxit Maximum number of ITR iterations; default = 100.
 #' @param pca_preprocess Logical: whether to do PCA to ensure full rank; default = TRUE.
-#' @return A list with:
-#' \item{\code{W_pca}}{The PCA projection matrix (columns are the top PCA components).}
-#' \item{\code{W_solde_tr}}{The \eqn{m} projection vectors from the trace ratio solution in the PCA subspace.}
-#' \item{\code{W}}{The final \eqn{D x m} projection matrix = \(\mathbf{W}_{\mathrm{PCA}} \times \mathbf{W}_{\mathrm{SOLDE-TR}}\).}
-#' \item{\code{eigvals_pca}}{Eigenvalues of the PCA step (if \code{pca_preprocess} = TRUE).}
-#' \item{\code{trace_ratio_history}}{Vector of trace ratio values across ITR iterations.}
+#' @param preproc A \code{multivarious} pre-processing function. Defaults to \code{center()}.
+#' @return A \code{\link[multivarious]{discriminant_projector}} object with subclass
+#'         \code{"solde_tr"} containing the learned projection and training scores.
 #'
 #' @references 
 #' \enumerate{
@@ -104,7 +101,8 @@
 #'  X <- matrix(rnorm(N*D), nrow = N, ncol = D)
 #'  y <- sample.int(3, size = N, replace = TRUE)
 #'
-#'  solde_res <- SOLDE_TR_fastNN(X, y, s=5, alpha=0.9, sigma=1.0, m=8, tol=1e-5, maxit=50)
+#'  solde_res <- solde_tr(X, y, s = 5, alpha = 0.9, sigma = 1.0,
+#'                         m = 8, tol = 1e-5, maxit = 50)
 #'  # Project new data X_new:
 #'  # Ynew <- t(solde_res$W) %*% t(X_new)
 #' }
@@ -117,7 +115,8 @@ solde_tr <- function(X,
                             m       = 10,
                             tol     = 1e-6,
                             maxit   = 100,
-                            pca_preprocess = TRUE) {
+                            pca_preprocess = TRUE,
+                            preproc = multivarious::center()) {
   ##############################################################################
   # 0. Checks and Packages
   ##############################################################################
@@ -126,8 +125,10 @@ solde_tr <- function(X,
   if (length(y) != nrow(X)) {
     stop("Length of label vector y must match the number of rows in X.")
   }
-  N <- nrow(X)
-  D <- ncol(X)
+  procres <- multivarious::prep(preproc)
+  X_proc <- multivarious::init_transform(procres, X)
+  N <- nrow(X_proc)
+  D <- ncol(X_proc)
   
   ##############################################################################
   # Helper function: Build adjacency matrix with Rnanoflann
@@ -211,7 +212,7 @@ solde_tr <- function(X,
   ##############################################################################
   # 1. (Optional) PCA Projection (Section 3)
   ##############################################################################
-  X_centered <- scale(X, center = TRUE, scale = FALSE)
+  X_centered <- X_proc
   W_pca <- diag(1, D, D)  # identity if no PCA preprocessing
   eigvals_pca <- rep(1, D)
   
@@ -330,13 +331,15 @@ solde_tr <- function(X,
   ##############################################################################
   W_final <- W_pca %*% W_solde_tr  # (D x PC) * (PC x m) => D x m
   
+  s_mat <- X_proc %*% W_final
+
   dp_obj <- multivarious::discriminant_projector(
-    v       = W_final,         # (D x m)
-    s       = X %*% W_final,   # training scores (N x m)
-    sdev    = apply(X %*% W_final, 2, sd),
-    preproc = your_preprocessing_object, # if you did any
+    v       = W_final,
+    s       = s_mat,
+    sdev    = apply(s_mat, 2, sd),
+    preproc = procres,
     labels  = y,
-    trace_ratio_history=trace_ratio_history,
+    trace_ratio_history = trace_ratio_history,
     classes = "solde_tr"
   )
   return(dp_obj)
