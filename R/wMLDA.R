@@ -78,7 +78,6 @@ wMLDA <- function(X, Y, weight_method=c("binary","correlation","entropy","fuzzy"
   # Preprocessing using multivarious
   procres <- multivarious::prep(preproc)
   Xp <- multivarious::init_transform(procres, X)
-  mu <- colMeans(Xp)
   
   # Compute weight matrix
   Wmat <- switch(weight_method,
@@ -89,8 +88,6 @@ wMLDA <- function(X, Y, weight_method=c("binary","correlation","entropy","fuzzy"
                  "dependence" = weight_dependence(Xp, Y, max_iter=max_iter_dep))
   
   w_sum_inst <- rowSums(Wmat) # \hat{w}_i
-  # n_total = sum of all weights
-  n_total <- sum(w_sum_inst)
   
   # Compute scatter matrices
   w_sum_class <- colSums(Wmat)
@@ -158,44 +155,30 @@ weight_binary <- function(Y) {
 weight_correlation <- function(Y) {
   l <- nrow(Y)
   q <- ncol(Y)
+
   norm_y <- sqrt(colSums(Y^2))
-  C <- matrix(0, q, q)
-  for (k in 1:q) {
-    for (kp in 1:q) {
-      if (norm_y[k] > 0 && norm_y[kp] > 0) {
-        C[k,kp] <- (Y[,k] %*% Y[,kp]) / (norm_y[k]*norm_y[kp])
-      } else {
-        C[k,kp] <- 0
-      }
-    }
-  }
-  
-  W <- matrix(0, l, q)
-  for (i in 1:l) {
-    yi <- Y[i,]
-    denom <- sum(yi)
-    if (denom > 0) {
-      W[i,] <- (C %*% yi) / denom
-    }
-  }
-  W[W<0] <- 0
+  norm_y[norm_y == 0] <- Inf
+
+  C <- crossprod(Y) / tcrossprod(norm_y)
+  C[!is.finite(C)] <- 0
+
+  W <- t(C %*% t(Y))
+  rsY <- rowSums(Y)
+  non_zero <- rsY > 0
+  W[non_zero, ] <- W[non_zero, , drop = FALSE] / rsY[non_zero]
+  W[!non_zero, ] <- 0
+
+  W[W < 0] <- 0
   W
 }
 
 #' @keywords internal
 #' @noRd
 weight_entropy <- function(Y) {
-  l <- nrow(Y)
   rsY <- rowSums(Y)
-  W <- Y
-  for (i in 1:l) {
-    denom <- rsY[i]
-    if (denom > 0) {
-      W[i,] <- Y[i,]/denom
-    } else {
-      W[i,] <- 0
-    }
-  }
+  denom <- ifelse(rsY > 0, rsY, 1)
+  W <- Y / denom
+  W[rsY == 0, ] <- 0
   W
 }
 
@@ -208,17 +191,12 @@ weight_fuzzy <- function(X, Y, max_iter=100, tol=1e-6) {
   q <- ncol(Y)
   
   update_means <- function(X, W) {
-    # M_k = sum_i (w_{i,k}^2 x_i)/sum_i (w_{i,k}^2)
-    M <- matrix(0, q, ncol(X))
-    for (k in 1:q) {
-      w2 <- W[,k]^2
-      denom <- sum(w2)
-      if (denom > 0) {
-        M[k,] <- colSums(X * w2) / denom
-      } else {
-        M[k,] <- 0
-      }
-    }
+    w2 <- W^2
+    denom <- colSums(w2)
+    M <- t(w2) %*% X
+    non_zero <- denom > 0
+    M[non_zero, ] <- M[non_zero, , drop = FALSE] / denom[non_zero]
+    M[!non_zero, ] <- 0
     M
   }
   
