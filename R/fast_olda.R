@@ -2,16 +2,14 @@
 #'
 #' Compute the group-wise mean vectors for a given data matrix.
 #'
-#' Given a data matrix \code{X} and a factor \code{Y}, this function computes the mean of the rows of \code{X} for each level of \code{Y}.
+#' Given a data matrix \code{X} and a factor \code{Y}, this function computes
+#' the mean of the rows of \code{X} for each level of \code{Y}.
 #'
-#' @param Y A \code{factor} indicating group membership for each row of \code{X}.
-#' @param X A \code{matrix} (n x d), where n is the number of samples and d is the number of features.
-#' @return A matrix of group means, where the number of rows equals the number of groups, and each row is the mean vector for that group.
-#' @export
-#' Compute Group Means
-#'
-#' Compute the group-wise mean vectors for a given data matrix.
-#'
+#' @param Y A \code{factor} indicating group membership for each row of
+#'   \code{X}.
+#' @param X A \code{matrix} (n x d), where \code{n} is the number of samples and
+#'   \code{d} is the number of features.
+#' @return A matrix whose rows are the mean vectors for each group.
 #' @export
 group_means <- function(Y, X) {
   
@@ -30,6 +28,22 @@ group_means <- function(Y, X) {
     row.names(ret) <- names(yt)
     return(ret)
   }
+}
+
+#' Compute Difference Matrix
+#'
+#' Helper used by \code{fastolda} to build scatter matrices. The function
+#' computes differences between consecutive observations and returns the
+#' transposed result.
+#'
+#' @param X A numeric matrix (n x d).
+#' @return A \code{d x (n - 1)} matrix of successive differences.
+#' @keywords internal
+compute_Htdiff <- function(X) {
+  if (!is.matrix(X)) {
+    stop("X must be a matrix")
+  }
+  t(diff(X))
 }
 
 #' Fast Orthogonal LDA
@@ -80,9 +94,14 @@ fastolda <- function(X, Y, preproc = center(), reg = 0.01) {
   
   HT <- sweep(Ht_diffS, 1, crossprod(m, Ht_diff), "-")
   HT <- cbind(t(-m %*% Ht_diff), HT)
+
+  if (length(Y) != ncol(HT)) {
+    stop("Length of Y must match the number of columns in HT")
+  }
   
-  # Compute ST = HT' * HT
-  ST <- tcrossprod(HT, HT)
+  # Compute ST = HT %*% t(HT)
+  ST <- tcrossprod(HT)
+  ST <- ST + reg * diag(ncol(ST))
   
   RT <- chol(ST)
   RT_inv <- chol2inv(RT)
