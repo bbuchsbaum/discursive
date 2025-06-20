@@ -685,13 +685,25 @@ dgpage_predict <- function(model, Xtest, k=1, method="euclidean") {
 }
 
 #' @export
+#' Print a dgpage_projector
+#'
+#' Displays a brief summary of a \code{dgpage_projector} including the
+#' size of the learned adjacency graph and stored hyperparameters.
+#'
+#' @param x A \code{dgpage_projector} object.
+#' @param ... Additional arguments passed to
+#'   \code{\link{print.discriminant_projector}}.
+#'
+#' @return The input object \code{x}, invisibly.
+#' @method print dgpage_projector
+#' @export
 print.dgpage_projector <- function(x, ...) {
   cat("A 'dgpage_projector' object (subclass of 'discriminant_projector').\n")
   cat("Learned adjacency graph W of size:", nrow(x$W), "x", ncol(x$W), "\n")
   cat(sprintf("Objective: %.3f\n", x$objective))
   cat("alpha:", x$alpha, " beta:", x$beta, "\n")
-  # Then delegate the rest to the standard print for discriminant_projector:
-  NextMethod()  # calls print.discriminant_projector
+  NextMethod()
+  invisible(x)
 }
 
 
