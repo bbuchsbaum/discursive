@@ -18,8 +18,8 @@ Typically a positive value. Default is 1.}
 
 \item{dim}{The number of dimensions (features) to retain in the transformed feature space.}
 
-\item{preproc}{A \code{pre_processor} object from \pkg{multivarious} (e.g. \code{center()}, \code{scale()}).
-Defaults to \code{center()}.}
+\item{preproc}{A \code{pre_processor} object from \pkg{multivarious}
+(e.g. \code{center()}, \code{scale()}). Defaults to \code{center()}.}
 }
 \value{
 A \code{discriminant_projector} object (subclass can be \code{"gmmsd"}) containing:
@@ -33,10 +33,11 @@ A \code{discriminant_projector} object (subclass can be \code{"gmmsd"}) containi
 }
 \description{
 This function implements the GMMSD method for feature extraction. It solves a
-generalized eigenvalue problem to find a projection that maximizes the difference
-between the between-class scatter and a scaled within-class scatter. The method
-uses a QR decomposition to enhance computational efficiency, making it suitable
-for high-dimensional data.
+symmetric generalized eigenvalue problem to find a projection that maximizes the
+difference between the between-class scatter and a scaled within-class scatter.
+The method uses a QR decomposition to enhance computational efficiency, making it
+suitable for high-dimensional data. The preprocessing object must come from the
+\pkg{multivarious} package.
 }
 \examples{
 \dontrun{
