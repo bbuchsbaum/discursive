@@ -32,3 +32,9 @@ Perform a fast Orthogonal Linear Discriminant Analysis (OLDA) based on provided 
 This function performs OLDA by pre-processing the data, computing difference-based scatter matrices, and then solving for a discriminant projection.
 The final result is returned as a \code{discriminant_projector} object from the \code{multivarious} package.
 }
+\examples{
+data(iris)
+X <- as.matrix(iris[, 1:4])
+Y <- iris[, 5]
+res <- fastolda(X, Y)
+}
