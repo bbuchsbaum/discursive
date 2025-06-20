@@ -15,7 +15,7 @@ dtrda(X, Y, preproc = multivarious::center(), d = 2, alpha)
 
 \item{d}{integer, the dimension of the discriminant subspace. Must be <= K-1 where K is the number of classes.}
 
-\item{alpha}{numeric, tuning parameter in \link{0,1} that controls the trade-off between between-class and within-class scatters.}
+\item{alpha}{numeric in \link{0,1} controlling the trade-off between between-class and within-class scatters.}
 }
 \value{
 An S3 object of class "discriminant_projector" containing the transformation matrix W,
@@ -28,7 +28,7 @@ the between-class scatter while controlling the within-class scatter.
 \examples{
 X = matrix(rnorm(100*1000), 100, 1000) 
 y = sample(1:3, 100, replace=TRUE)
-V = dtrda(X, y, d=2, alpha=0.5, lambda=0.1)
+V = dtrda(X, y, d=2, alpha=0.5)
 Xp = X \%*\% V  # project data onto discriminant subspace
 
 }
