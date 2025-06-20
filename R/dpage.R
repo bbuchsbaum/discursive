@@ -82,6 +82,8 @@ NULL
 #' @param maxiter,tol,verbose Passed to \code{\link{dgpage_fit}}.
 #' @param q If \code{S} or \code{D} is \code{NULL}, we use \code{q} in
 #'   \code{\link{compute_similarity_graph}}. Default 1.5.
+#' @param seed Optional seed passed to \code{dgpage_fit} for reproducible
+#'   initialization.
 #'
 #' @return An object of class \code{c("dgpage_projector","discriminant_projector","bi_projector",...)}
 #'   containing:
@@ -115,7 +117,8 @@ dgpage_discriminant <- function(X, y,
                                 maxiter= 20,
                                 tol    = 1e-5,
                                 verbose= TRUE,
-                                q      = 1.5)
+                                q      = 1.5,
+                                seed   = NULL)
 {
   y <- as.factor(y)
   n <- nrow(X)
@@ -136,7 +139,7 @@ dgpage_discriminant <- function(X, y,
   fitres <- dgpage_fit(X, S=S, D=D, r=r,
                        alpha=alpha, beta=beta,
                        maxiter=maxiter, tol=tol,
-                       verbose=verbose)
+                       verbose=verbose, seed=seed)
   
   # Build training scores: s = X %*% P
   # fitres$P is d x r
@@ -295,68 +298,37 @@ predict.dgpage_projector <- function(object,
 #' @param q A positive exponent (see Eqs. (5) and (6)). Typical range is [1, 3].
 #'
 #' @return An \eqn{n \times n} matrix \eqn{S}.
+#' @details This implementation constructs the full pairwise matrix and
+#'   therefore has \eqn{O(n^2)} memory and time complexity.
+#'   Consider a more efficient approach for very large \eqn{n}.
 #' @export
 compute_similarity_graph <- function(X, y, q = 1.5) {
   n <- nrow(X)
-  
-  # Precompute distance matrix (squared distances).
-  # dist(X) returns pairwise distances in condensed form -> convert to full matrix:
-  distMat <- as.matrix(dist(X, method = "euclidean"))^2  # squared distances
-  
-  # For each sample i, compute:
-  #   tau_i^+ = (1 / (n^+(c_i)^q)) * sum_{z_l in same class} || x_i - x_l ||^2
-  #   tau_i^- = (1 / (n^-(c_i)^q)) * sum_{z_l in different classes} || x_i - x_l ||^2
-  # where n^+(c_i) is #intra-class samples, n^-(c_i) is #inter-class samples.
-  # Because each sample i includes itself, we carefully handle that sum.
-  
-  label_tab <- table(y)
-  
-  tau_plus <- numeric(n)
-  tau_minus <- numeric(n)
-  
-  for (i in seq_len(n)) {
-    same_idx <- which(y == y[i])
-    diff_idx <- which(y != y[i])
-    
-    # Remove the sample i from the sums if desired,
-    # but the original paper's eq(5),(6) typically includes i as well.
-    # We'll follow the typical approach in references (Gou et al. 2020).
-    
-    # sum of squared distances to all *intra-class* samples
-    s_plus <- sum(distMat[i, same_idx])
-    # sum of squared distances to all *inter-class* samples
-    s_minus <- sum(distMat[i, diff_idx])
-    
-    n_plus <- length(same_idx)
-    n_minus <- length(diff_idx)
-    
-    tau_plus[i]  <- s_plus  / (n_plus^q)
-    tau_minus[i] <- s_minus / (n_minus^q)
-  }
-  
-  # Construct the S matrix
-  S <- matrix(0, n, n)
-  for (i in seq_len(n)) {
-    for (j in seq_len(n)) {
-      if (i == j) {
-        S[i, j] <- 0
-      } else {
-        if (y[i] == y[j]) {
-          # intra-class
-          val <- 0.5 * (exp(- distMat[i, j] / tau_plus[i]) +
-                          exp(- distMat[j, i] / tau_plus[j]))
-          S[i, j] <- val
-        } else {
-          # inter-class
-          val <- -0.5 * (exp(- distMat[i, j] / tau_minus[i]) +
-                           exp(- distMat[j, i] / tau_minus[j]))
-          S[i, j] <- val
-        }
-      }
-    }
-  }
-  
-  return(S)
+
+  # Precompute squared pairwise distances (n x n)
+  distMat <- as.matrix(dist(X, method = "euclidean"))^2
+
+  # Indicator matrices for class memberships
+  same  <- outer(y, y, "==")
+  diff  <- !same
+
+  n_plus  <- rowSums(same)
+  n_minus <- rowSums(diff)
+
+  tau_plus  <- rowSums(distMat * same)  / (n_plus^q)
+  tau_minus <- rowSums(distMat * diff)  / (n_minus^q)
+
+  Tau_plus_row  <- matrix(tau_plus,  n, n, byrow = FALSE)
+  Tau_plus_col  <- matrix(tau_plus,  n, n, byrow = TRUE)
+  Tau_minus_row <- matrix(tau_minus, n, n, byrow = FALSE)
+  Tau_minus_col <- matrix(tau_minus, n, n, byrow = TRUE)
+
+  S_same <-  0.5 * (exp(-distMat / Tau_plus_row)  + exp(-distMat / Tau_plus_col))
+  S_diff <- -0.5 * (exp(-distMat / Tau_minus_row) + exp(-distMat / Tau_minus_col))
+
+  S <- ifelse(same, S_same, S_diff)
+  diag(S) <- 0
+  S
 }
 
 
@@ -377,6 +349,8 @@ compute_similarity_graph <- function(X, y, q = 1.5) {
 #' @param y A length-\eqn{n} vector/factor of class labels.
 #'
 #' @return An \eqn{n \times n} matrix \eqn{D}.
+#' @details The computation forms all pairwise distances and therefore
+#'   scales quadratically with the number of samples.
 #' @export
 compute_diversity_graph <- function(X, y) {
   n <- nrow(X)
@@ -385,40 +359,20 @@ compute_diversity_graph <- function(X, y) {
   # rho_i^+, rho_i^- ~ same as tau_i^+, tau_i^- but q=0
   # => effectively the average is replaced by total sum (since n^0 = 1).
   
-  rho_plus  <- numeric(n)
-  rho_minus <- numeric(n)
-  
-  for (i in seq_len(n)) {
-    same_idx <- which(y == y[i])
-    diff_idx <- which(y != y[i])
-    
-    s_plus  <- sum(distMat[i, same_idx])
-    s_minus <- sum(distMat[i, diff_idx])
-    # no division by n_plus^q or n_minus^q if q=0 => that is n_plus^0=1, so no effect:
-    rho_plus[i]  <- s_plus
-    rho_minus[i] <- s_minus
-  }
-  
-  D <- matrix(0, n, n)
-  for (i in seq_len(n)) {
-    for (j in seq_len(n)) {
-      if (i == j) {
-        D[i, j] <- 0
-      } else {
-        if (y[i] == y[j]) {
-          val <- 0.5 * (exp(distMat[i, j] / rho_plus[i]) +
-                          exp(distMat[j, i] / rho_plus[j]))
-          D[i, j] <- val
-        } else {
-          val <- 0.5 * (exp(distMat[i, j] / rho_minus[i]) +
-                          exp(distMat[j, i] / rho_minus[j]))
-          D[i, j] <- val
-        }
-      }
-    }
-  }
-  
-  return(D)
+  rho_plus  <- rowSums(distMat * same)
+  rho_minus <- rowSums(distMat * diff)
+
+  R_plus_row  <- matrix(rho_plus,  n, n, byrow = FALSE)
+  R_plus_col  <- matrix(rho_plus,  n, n, byrow = TRUE)
+  R_minus_row <- matrix(rho_minus, n, n, byrow = FALSE)
+  R_minus_col <- matrix(rho_minus, n, n, byrow = TRUE)
+
+  D_same <- 0.5 * (exp(distMat / R_plus_row) + exp(distMat / R_plus_col))
+  D_diff <- 0.5 * (exp(distMat / R_minus_row) + exp(distMat / R_minus_col))
+
+  D <- ifelse(same, D_same, D_diff)
+  diag(D) <- 0
+  D
 }
 
 
@@ -460,6 +414,7 @@ compute_diversity_graph <- function(X, y) {
 #' @param maxiter Maximum number of iterations for the alternating updates.
 #' @param tol Convergence tolerance on the objective value.
 #' @param verbose Whether to print progress information.
+#' @param seed Optional integer seed controlling the random initialization.
 #'
 #' @return A list with:
 #' \itemize{
@@ -473,9 +428,9 @@ compute_diversity_graph <- function(X, y) {
 dgpage_fit <- function(X, S, D, r = 10,
                        alpha = 1e-3, beta = 1e-5,
                        maxiter = 20, tol = 1e-5,
-                       verbose = TRUE) {
+                       verbose = TRUE, seed = NULL) {
   # Transpose X: let Z = d x n
-  Z <- t(X)  
+  Z <- t(X)
   d <- nrow(Z)
   n <- ncol(Z)
   
@@ -485,7 +440,9 @@ dgpage_fit <- function(X, S, D, r = 10,
   }
   
   # Initialize P: d x r (random orthonormal)
-  set.seed(2024)  # for reproducibility, adjust as you like
+  if (!is.null(seed)) {
+    set.seed(seed)
+  }
   # We can do e.g. random normal, then orthonormalize:
   tmp <- matrix(rnorm(d*r), nrow=d, ncol=r)
   # Orthonormal via QR decomposition:
@@ -544,14 +501,11 @@ dgpage_fit <- function(X, S, D, r = 10,
     
     Y <- t(P) %*% Z  # r x n
     
-    # compute E (n x n)
-    E <- matrix(0, n, n)
-    for (i in seq_len(n)) {
-      for (j in seq_len(n)) {
-        diff_ij <- Y[, i] - Y[, j]
-        E[i, j] <- sum(diff_ij^2)
-      }
-    }
+    # compute E (n x n) more efficiently as pairwise squared distances
+    Yt <- t(Y)  # n x r
+    G <- rowSums(Yt^2)
+    E <- outer(G, G, "+") - 2 * (Yt %*% t(Yt))
+    E[E < 0] <- 0
     
     # YtY = t(Y) %*% Y => dimension: (n x r) * (r x n) = n x n
     YtY <- t(Y) %*% Y
@@ -610,18 +564,17 @@ dgpage_fit <- function(X, S, D, r = 10,
       MASS::ginv(N) %*% M
     })
     
-    eigres <- eigen(Mtilde, symmetric=FALSE)  # not guaranteed symmetric if solve(N, M)
-    # Then we pick the r eigenvectors corresponding to the r smallest real parts of eigenvalues
-    # (the paper states "smallest eigenvalues" -> real. We might need only the real part)
-    
-    # filter real eigenvalues
-    lambdas <- Re(eigres$values)
-    vectors <- Re(eigres$vectors)
-    
-    # sort ascending
-    idx_sorted <- order(lambdas, decreasing = FALSE)
-    idx_chosen <- idx_sorted[seq_len(r)]
-    P_eigs <- vectors[, idx_chosen, drop=FALSE]  # d x r
+    eigres <- tryCatch({
+      RSpectra::eigs(Mtilde, k = r, which = "SM")
+    }, error = function(e) {
+      eigen(Mtilde, symmetric = FALSE)
+    })
+    if (!is.null(attr(eigres, "class")) && any(attr(eigres, "class") == "eigs")) {
+      P_eigs <- eigres$vectors
+    } else {
+      idx <- order(Re(eigres$values))[seq_len(r)]
+      P_eigs <- eigres$vectors[, idx, drop = FALSE]
+    }
     
     # we might want to re-orthonormalize P
     # in principle, the generalized eigenvectors are typically not orthonormal w.r.t. the standard dot product.
@@ -678,6 +631,9 @@ dgpage_fit <- function(X, S, D, r = 10,
 #' @param method Distance method for \code{\link[Rnanoflann]{nn}}. Default "euclidean".
 #'
 #' @return A vector of length \eqn{m} with predicted labels.
+#' @details This helper is retained for backward compatibility.  The
+#'   recommended approach is to call \code{predict()} on the
+#'   \code{dgpage_projector} object returned by \code{dgpage_discriminant}.
 #' @export
 #' @seealso \code{\link[Rnanoflann]{nn}}
 #' @examples
