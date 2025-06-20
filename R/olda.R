@@ -6,8 +6,8 @@
 #'
 #' @param X A numeric matrix where columns represent features and rows represent samples.
 #' @param Y A factor or numeric vector representing class labels for each sample.
-#' @param preproc A preprocessing function (from \code{multivarious}) to apply to the data. 
-#'   Default is \code{pass()} (no preprocessing).
+#' @param preproc A preprocessing function (from \code{multivarious}) to apply
+#'   to \code{X}. Defaults to \code{pass()} (no preprocessing).
 #' @return A \code{discriminant_projector} object containing:
 #'   \itemize{
 #'     \item \code{v}    : The orthogonal loadings (projection matrix).
@@ -35,6 +35,16 @@
 #'
 #' @seealso \code{\link{ulda}}, \code{\link{qr}}, \code{\link{qr.Q}}, \code{\link[multivarious]{discriminant_projector}}
 olda <- function(X, Y, preproc = pass()) {
+  # Basic checks and coercions
+  if (!is.matrix(X)) {
+    X <- as.matrix(X)
+  }
+
+  if (nrow(X) != length(Y)) {
+    stop("'Y' must have the same number of observations as rows in 'X'.")
+  }
+  Y <- as.factor(Y)
+
   # 1) Run ULDA
   res_lda <- ulda(X, Y, preproc = preproc)
   
