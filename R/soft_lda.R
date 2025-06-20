@@ -6,10 +6,13 @@
 #' according to its weight.
 #'
 #' @param X A numeric matrix of shape \code{n x d}, where \code{n} is the number of samples (rows)
-#'          and \code{d} is the number of features (columns).
+#'          and \code{d} is the number of features (columns). If not already a
+#'          matrix, it will be coerced with \code{as.matrix()}.
 #' @param F A numeric matrix of shape \code{c x n}, where \code{c} is the number of classes
 #'          and \code{n} is the number of samples. \code{F[i, j]} is the weight of sample \code{j}
-#'          for class \code{i}, and each row must have a positive sum of weights.
+#'          for class \code{i}. Each row must have a positive sum of weights; the
+#'          function stops with an error otherwise. Non-matrix inputs are
+#'          coerced with \code{as.matrix()}.
 #'
 #' @return A numeric matrix of shape \code{c x d}, where each row is the weighted mean of \code{X}
 #'         for one class.
@@ -24,18 +27,20 @@
 #' 
 #' @export
 weighted_group_means <- function(X, F) {
+  if (!is.matrix(X)) X <- as.matrix(X)
+  if (!is.matrix(F)) F <- as.matrix(F)
+
   row_sums_F <- rowSums(F)
   if (any(row_sums_F <= 0)) {
     stop("Each row of F must have a positive sum of weights (>=1 sample).")
   }
-  
-  ret <- do.call(rbind, lapply(seq_len(nrow(F)), function(i) {
-    w <- F[i, ]
-    # normalize by sum(w) => colWeightedMeans
-    matrixStats::colWeightedMeans(X, w / sum(w))
-  }))
-  
+
+  # Vectorized computation: (c x n) %*% (n x d) => (c x d)
+  ret <- F %*% X
+  ret <- sweep(ret, 1, row_sums_F, "/")
+
   rownames(ret) <- rownames(F)
+  colnames(ret) <- colnames(X)
   ret
 }
 
@@ -166,24 +171,14 @@ soft_lda <- function(X,
   ## 5) Weighted scatter in PCA space
   #    within-class => Sw = Xpca^T [ E - F^T G^-1 F ] Xpca + alpha I
   #    between-class => Sb = Xpca^T [F^T G^-1 F - (E e e^T E)/denom ] Xpca
-  
-  sw_scatter <- function(X_in) {
-    Ft  <- t(F) 
-    invG <- diag(1 / diag(G))
-    M <- E - Ft %*% invG %*% F
-    crossprod(X_in, M %*% X_in)
-  }
-  
-  sb_scatter <- function(X_in) {
-    Ft   <- t(F)
-    invG <- diag(1 / diag(G))
-    M1   <- Ft %*% invG %*% F
-    M2   <- (E %*% tcrossprod(e_vec) %*% E) / denom
-    crossprod(X_in, (M1 - M2) %*% X_in)
-  }
-  
-  Sw_raw <- sw_scatter(Xpca)
-  Sb_raw <- sb_scatter(Xpca)
+
+  Ft   <- t(F)
+  invG <- diag(1 / diag(G))
+  M_sw <- E - Ft %*% invG %*% F
+  M_sb <- Ft %*% invG %*% F - (E %*% tcrossprod(e_vec) %*% E) / denom
+
+  Sw_raw <- crossprod(Xpca, M_sw %*% Xpca)
+  Sb_raw <- crossprod(Xpca, M_sb %*% Xpca)
   
   # add alpha => ridge for invertibility
   Sw <- Sw_raw + alpha * diag(dp)
