@@ -13,7 +13,8 @@ slrr(
   max_iter = 50,
   tol = 1e-06,
   preproc = center(),
-  verbose = FALSE
+  verbose = FALSE,
+  st_ridge = 1e-06
 )
 }
 \arguments{
@@ -39,6 +40,7 @@ Ignored if \code{penalty="ridge"} (no iteration needed).}
 to center (and possibly scale) \code{X} before regression.}
 
 \item{verbose}{Logical, if \code{TRUE} prints iteration details for the \code{"l21"} case.}
+\item{st_ridge}{Small ridge term added to \code{S_t} when solving the eigenproblem.}
 }
 \value{
 A \code{\link[multivarious]{discriminant_projector}} object with subclass \code{"slrr"} that contains:

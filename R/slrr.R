@@ -31,6 +31,8 @@
 #' @param preproc A preprocessing function/object from \pkg{multivarious}, default \code{center()},
 #'                to center (and possibly scale) \code{X} before regression.
 #' @param verbose Logical, if \code{TRUE} prints iteration details for the \code{"l21"} case.
+#' @param st_ridge Small ridge term added to \code{S_t} when solving the eigenproblem
+#'        to avoid singularity (default 1e-6).
 #'
 #' @return A \code{\link[multivarious]{discriminant_projector}} object with subclass \code{"slrr"} that contains:
 #'   \itemize{
@@ -105,7 +107,8 @@ slrr <- function(X,
                  max_iter = 50,
                  tol = 1e-6,
                  preproc = center(),
-                 verbose = FALSE)
+                 verbose = FALSE,
+                 st_ridge = 1e-6)
 {
   penalty <- match.arg(penalty)
   
@@ -121,15 +124,32 @@ slrr <- function(X,
   # Normalize each column to sum=1
   G <- sweep(G, 2, colSums(G), FUN="/")
   cdim <- ncol(G)                  # number of classes
+
+  if (cdim < 2) {
+    stop("Y must contain at least two classes")
+  }
+
+  max_s <- min(cdim - 1, d)
+  if (s < 1 || s > max_s) {
+    stop(sprintf("s must be between 1 and %d", max_s))
+  }
+
+  # precompute cross-products used repeatedly
+  Xt <- t(Xp)
+  XtX <- Xt %*% Xp
   
   # 3) Compute total scatter (St) and between-class scatter (Sb)
   mu <- colMeans(Xp)
   St <- total_scatter(Xp, mu)      # d x d
   Sb <- between_class_scatter(Xp, Y) # d x d
   
-  # 4) Solve generalized eigenproblem M = St^-1 Sb => top s eigenvectors => A
-  #    (If St is singular, you might need a pseudo-inverse or small ridge.)
-  M <- solve(St, Sb)
+  # 4) Solve generalized eigenproblem M = (St + st_ridge*I)^-1 Sb => top s eigenvectors => A
+  St_reg <- St + st_ridge * diag(d)
+  M <- tryCatch({
+    solve(St_reg, Sb)
+  }, error = function(e) {
+    MASS::ginv(St_reg) %*% Sb
+  })
   eigres <- eigen(M, symmetric=TRUE)
   A <- eigres$vectors[, 1:s, drop=FALSE]  # d x s
   
@@ -140,11 +160,13 @@ slrr <- function(X,
   
   # We'll define a small function to solve for (A, B, W) given D
   get_ABW <- function(A_in, D_in) {
-    Xt <- t(Xp)               # (d x n)
-    # (X X^T + lambda D) => (d x d)
-    reg_mat <- Xt %*% t(Xt) + lambda * D_in
-    # Solve for B => B = (A^T reg_mat A)^{-1} (A^T Xt G)
-    left_inv <- solve(t(A_in) %*% reg_mat %*% A_in)
+    reg_mat <- XtX + lambda * D_in
+    left_mat <- t(A_in) %*% reg_mat %*% A_in
+    left_inv <- tryCatch({
+      solve(left_mat)
+    }, error = function(e) {
+      MASS::ginv(left_mat)
+    })
     B_in <- left_inv %*% (t(A_in) %*% Xt %*% G)  # (s x c)
     
     W_in <- A_in %*% B_in                        # (d x c)
@@ -159,6 +181,7 @@ slrr <- function(X,
     # Single pass => get B, W
     outABW <- get_ABW(A, Dmat)
     W <- outABW$W
+    B <- outABW$B
   } else {
     # ========== "l21" iterative reweighting approach ==========
     # We'll define an iterative loop:
@@ -183,17 +206,25 @@ slrr <- function(X,
     W <- matrix(0, d, cdim)
     
     for (iter in seq_len(max_iter)) {
-      # step 1) Solve for A => top s eigenvectors of (St + lambda D)^-1 Sb
-      # i.e. M = solve(St + lambda D, Sb)
-      M_l21 <- solve(St + lambda * Dmat, Sb)
+      # step 1) Solve for A => top s eigenvectors of (St + lambda D + st_ridge*I)^-1 Sb
+      St_iter <- St + lambda * Dmat + st_ridge * diag(d)
+      M_l21 <- tryCatch({
+        solve(St_iter, Sb)
+      }, error = function(e) {
+        MASS::ginv(St_iter) %*% Sb
+      })
       eig_l21 <- eigen(M_l21, symmetric=TRUE)
       A_new <- eig_l21$vectors[, 1:s, drop=FALSE]
       
       # step 2) Solve for B => eq. (28):
       # same as get_ABW but with the updated A
-      Xt <- t(Xp)
-      reg_mat <- Xt %*% t(Xt) + lambda * Dmat
-      left_inv <- solve(t(A_new) %*% reg_mat %*% A_new)
+      reg_mat <- XtX + lambda * Dmat
+      left_mat <- t(A_new) %*% reg_mat %*% A_new
+      left_inv <- tryCatch({
+        solve(left_mat)
+      }, error = function(e) {
+        MASS::ginv(left_mat)
+      })
       B_new <- left_inv %*% (t(A_new) %*% Xt %*% G)
       
       W_new <- A_new %*% B_new
@@ -226,6 +257,7 @@ slrr <- function(X,
         # converged
         A <- A_new
         W <- W_new
+        B <- B_new
         Dmat <- Dmat_new
         break
       }
@@ -233,6 +265,7 @@ slrr <- function(X,
       # update
       A <- A_new
       W <- W_new
+      B <- B_new
       Dmat <- Dmat_new
       old_obj <- new_obj
       
@@ -255,7 +288,7 @@ slrr <- function(X,
     labels  = Y,
     classes = c("slrr", penalty),
     A       = A,   # store subspace
-    B       = NULL # we can store or omit B, up to you
+    B       = B
   )
   
   return(dp)
