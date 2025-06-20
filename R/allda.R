@@ -3,12 +3,15 @@
 #' and retain a number of principal components that explain at least 
 #' `var_retained` proportion of variance.
 #' @param X Data matrix of size n x d (n samples, d features).
-#' @param var_retained Proportion of variance to retain (default is 0.95).
+#' @param var_retained Proportion of variance to retain. Must be between 0 and
+#'   1. Default is 0.95.
 #' @return A list containing:
 #' \item{X_pca}{The transformed data matrix after PCA (n x d_pca).}
 #' \item{rot}{The PCA rotation/loadings matrix (d x d_pca).}
 #' \item{fit}{The PCA fit object from `multivarious::pca`.}
 apply_pca <- function(X, var_retained = 0.95) {
+  assertthat::assert_that(var_retained > 0 && var_retained <= 1,
+                          msg = "'var_retained' must be between 0 and 1")
   pca_result <- multivarious::pca(X, preproc = multivarious::pass())
   # pca_result$d are singular values
   var_explained <- pca_result$d^2 / sum(pca_result$d^2)
@@ -32,13 +35,18 @@ apply_pca <- function(X, var_retained = 0.95) {
 #' @param k Number of neighbors.
 #' @return A list containing the initialized similarity matrix S.
 initialize_parameters <- function(X, y, ncomp, k) {
-  n <- nrow(X)  # Number of samples
+  n <- nrow(X)
   S <- matrix(0, n, n)
+
+  nn_result <- Rnanoflann::nn(data = X, points = X, k = k + 1,
+                               method = "euclidean", search = "standard",
+                               eps = 0.0, square = FALSE, trans = TRUE)
+  indices <- nn_result$indices[, -1, drop = FALSE]
+
   for (i in 1:n) {
-    distances <- rowSums((X[i, , drop=FALSE] - X)^2)
-    nn_idx <- order(distances)[2:(k + 1)]  # Exclude the point itself
-    S[i, nn_idx] <- 1 / k
+    S[i, indices[i, ]] <- 1 / k
   }
+
   list(S = S)
 }
 
@@ -60,16 +68,13 @@ update_laplacian <- function(S) {
 #' @param reg Regularization term to ensure invertibility of St (default is 1e-5).
 #' @return Transformation matrix W (d x ncomp).
 update_W <- function(X, L_A, ncomp, reg = 1e-5) {
-  St <- t(X) %*% X  # d x d
-  St <- St + reg * Matrix::Diagonal(ncol(St))  # Regularization
-  
-  Xt_LA_X <- t(X) %*% L_A %*% X  # d x d
-  
-  M <- solve(St) %*% Xt_LA_X
-  eig <- RSpectra::eigs(M, k = ncomp, which = "SM")
-  ord <- order(eig$values)
-  
-  W <- eig$vectors[, ord[1:ncomp], drop=FALSE]
+  St <- t(X) %*% X
+  St <- St + reg * Matrix::Diagonal(ncol(St))
+
+  Xt_LA_X <- t(X) %*% L_A %*% X
+
+  ge <- geneig(Xt_LA_X, St, ncomp = ncomp)
+  W <- ge$v
   
   normfac <- sqrt(Matrix::diag(t(W) %*% St %*% W))
   W <- sweep(W, 2, normfac, "/")
@@ -109,7 +114,10 @@ update_similarity <- function(X, W, k, r, epsilon = 1e-10) {
 }
 
 #' @title Adaptive Local Linear Discriminant Analysis (ALLDA)
-#' @description Perform dimensionality reduction using the ALLDA algorithm.
+#' @description Perform dimensionality reduction using the ALLDA algorithm. The
+#'   procedure alternates between updating a local similarity graph based on the
+#'   current projection and solving a generalized eigenproblem to obtain the
+#'   transformation matrix.
 #' @param X Data matrix of size n x d (n samples, d features).
 #' @param y Label vector of length n.
 #' @param ncomp Reduced dimension (must be less than the number of features retained by PCA).
@@ -118,7 +126,8 @@ update_similarity <- function(X, W, k, r, epsilon = 1e-10) {
 #' @param preproc A preprocessing step from `multivarious`. Defaults to centering.
 #' @param max_iter Maximum number of iterations (default is 30).
 #' @param tol Convergence tolerance (default is 1e-4).
-#' @param var_retained Proportion of variance to retain during PCA (default is 0.95).
+#' @param var_retained Proportion of variance to retain during PCA. Must be between
+#'   0 and 1. Default is 0.95.
 #' @param reg Regularization term to ensure invertibility of St (default is 1e-5).
 #' @return An S3 object of class "discriminant_projector" containing the transformation matrix W, 
 #' the transformed scores, and related metadata.
@@ -135,10 +144,12 @@ allda <- function(X, y, ncomp, k, r = 2, preproc=multivarious::center(),
   assertthat::assert_that(ncomp > 0, msg="ncomp must be greater than 0")
   assertthat::assert_that(k > 0 && k < nrow(X), msg="k must be between 1 and n-1")
   assertthat::assert_that(r > 1, msg="r must be greater than 1")
+  assertthat::assert_that(var_retained > 0 && var_retained <= 1,
+                          msg="var_retained must be between 0 and 1")
   
   # Preprocessing
   procres <- multivarious::prep(preproc)
-  Xp <- init_transform(procres, X)
+  Xp <- multivarious::init_transform(procres, X)
   
   # Apply PCA to remove the null space
   pca_result <- apply_pca(Xp, var_retained)
