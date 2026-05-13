@@ -1,95 +1,67 @@
-#' @title Weighted Harmonic Mean of Trace Ratios for Multiclass Discriminant Analysis
+#' Weighted Harmonic Mean of Trace Ratios (WHM-TR)
 #'
-#' @description This function implements the Weighted Harmonic Mean of Trace Ratios (WHM-TR) method for 
-#' multiclass discriminant analysis as described in the referenced paper. The goal is to find a linear 
-#' transformation \eqn{W} that improves class separability by minimizing the weighted harmonic mean of 
-#' trace ratios derived from the between-class and within-class scatter matrices.
+#' Implements the Weighted Harmonic Mean of Trace Ratios method for multiclass
+#' discriminant analysis (Li et al., 2017). Finds a linear transformation that
+#' minimises the weighted harmonic mean of pairwise trace ratios derived from
+#' between- and within-class scatter matrices.
 #'
-#' @param X A numeric matrix of size \code{n x d}, where \code{n} is the number of samples and \code{d} is the number of features.
-#'          Rows correspond to samples and columns to features.
-#' @param labels A vector of length \code{n} containing the class labels of the samples. Can be a factor or a numeric vector.
-#' @param m The number of dimensions to reduce to, i.e., the number of columns in the projection matrix \eqn{W}.
+#' @param X A numeric matrix `n x d`.
+#' @param y A factor or numeric vector of class labels of length `n`. If
+#'   numeric, it is coerced to a factor.
+#' @param ncomp Integer. Number of dimensions to retain.
+#' @param preproc A preprocessing function from `multivarious`. Defaults to
+#'   [multivarious::pass()] (no centering) for backward compatibility.
 #'
-#' @return A \code{\link[multivarious]{discriminant_projector}} object with:
-#'   \itemize{
-#'     \item \code{v}: The projection matrix \eqn{W} of size \code{d x m}.
-#'     \item \code{s}: The transformed data \eqn{X W} of size \code{n x m}.
-#'     \item \code{sdev}: The standard deviations of each column in \code{s}.
-#'     \item \code{labels}: The original labels if provided (as a factor).
-#'     \item \code{classes}: set to \code{"whm_lda"}.
-#'   }
+#' @return A `discriminant_projector` (subclass `"whm_lda"`).
 #'
-#' @details
-#' The algorithm implemented here follows the approach described in Li et al. (2017), 
-#' "Beyond Trace Ratio: Weighted Harmonic Mean of Trace Ratios for Multiclass Discriminant Analysis." 
-#' The method proceeds as follows:
-#' \enumerate{
-#'   \item Compute the between-class (\eqn{S_b}) and within-class (\eqn{S_w}) scatter matrices.
-#'   \item Initialize a projection matrix \eqn{W} (of size \code{d x m}) randomly and ensure it is orthonormal.
-#'   \item Iteratively update \eqn{W} by minimizing the weighted harmonic mean of trace ratios. This involves:
-#'     \itemize{
-#'       \item Evaluating pairs of classes and computing partial scatter matrices for each pair.
-#'       \item Updating \eqn{W} by solving an eigen-decomposition problem derived from these intermediate matrices.
-#'     }
-#'   \item Stop when convergence is reached (based on a tolerance) or after a maximum number of iterations.
-#' }
-#'
-#' After convergence, \eqn{W} is returned in a standard \code{discriminant_projector} format, along with
-#' the reduced data \eqn{XW} in \code{s}.
-#'
-#' @references 
-#' Li, Zhihui, et al. "Beyond Trace Ratio: Weighted Harmonic Mean of Trace Ratios for Multiclass Discriminant Analysis." 
-#' \emph{IEEE Transactions on Knowledge and Data Engineering (TKDE)}, 2017.
+#' @references
+#' Li, Z. *et al.* (2017). "Beyond Trace Ratio: Weighted Harmonic Mean of
+#' Trace Ratios for Multiclass Discriminant Analysis." *IEEE TKDE*.
 #'
 #' @examples
 #' \dontrun{
 #' data(iris)
-#' X <- as.matrix(iris[,1:4])
-#' labels <- iris[,5]
-#' proj <- whm_lda(X, labels, m=2)
+#' X <- as.matrix(iris[, 1:4])
+#' y <- iris[, 5]
+#' proj <- whm_lda(X, y, ncomp = 2)
 #' print(proj)
-#' # Now you can do:
-#' # new_data <- ...
-#' # projected <- project(proj, new_data)
 #' }
 #'
 #' @export
-whm_lda <- function(X, labels, m) {
+whm_lda <- function(X, y, ncomp, preproc = multivarious::pass()) {
+  cl <- match.call()
+
   if (!requireNamespace("multivarious", quietly = TRUE)) {
     stop("Package 'multivarious' is required (for discriminant_projector) but not installed.")
   }
-  
-  # Ensure labels are a factor for consistent indexing
-  if (!is.factor(labels)) {
-    labels <- as.factor(labels)
-  }
-  if (!is.numeric(m) || length(m) != 1 || m < 1 || m > ncol(X)) {
-    stop("'m' must be an integer between 1 and the number of features")
+
+  if (!is.factor(y)) y <- as.factor(y)
+  if (!is.numeric(ncomp) || length(ncomp) != 1 || ncomp < 1 || ncomp > ncol(X)) {
+    stop("'ncomp' must be an integer between 1 and the number of features")
   }
 
-  classes <- levels(labels)
-  c <- length(classes)
+  procres <- multivarious::prep(preproc)
+  Xp <- multivarious::init_transform(procres, X)
 
-  # Initialize W with random values and orthogonalize using QR decomposition
+  classes_y <- levels(y)
+  c <- length(classes_y)
+
   initializeW <- function(d, m) {
     W <- matrix(rnorm(d * m), nrow = d, ncol = m)
     qr.Q(qr(W))
   }
 
-  # The main optimization loop for WHM-TR (Algorithm 1 from the paper)
-  solveWHMTR <- function(X, labels, m, max.iter = 100, tol = 1e-6) {
+  solveWHMTR <- function(X, y, m, max.iter = 100, tol = 1e-6) {
     d <- ncol(X)
     W <- initializeW(d, m)
 
-    class_stats <- lapply(classes, function(cl) {
-      idx <- which(labels == cl)
-      Xc <- X[idx, , drop = FALSE]
-      mu <- colMeans(Xc)
-      list(
-        n  = nrow(Xc),
-        mu = mu,
-        Sw = crossprod(sweep(Xc, 2, mu))
-      )
+    class_stats <- lapply(classes_y, function(cl_lab) {
+      idx <- which(y == cl_lab)
+      Xc  <- X[idx, , drop = FALSE]
+      mu  <- colMeans(Xc)
+      list(n  = nrow(Xc),
+           mu = mu,
+           Sw = crossprod(sweep(Xc, 2, mu)))
     })
 
     pair_stats <- list()
@@ -104,58 +76,41 @@ whm_lda <- function(X, labels, m) {
         )
       }
     }
-    
+
     for (iter in seq_len(max.iter)) {
       M <- matrix(0, nrow = d, ncol = d)
-      
       for (pair in pair_stats) {
         num_b <- sum(diag(crossprod(W, pair$Sb %*% W)))
         if (abs(num_b) < .Machine$double.eps) next
         num_w <- sum(diag(crossprod(W, pair$Sw %*% W)))
         M <- M + (1 / num_b) * pair$Sw - (num_w / (num_b^2)) * pair$Sb
       }
-      
-      # Solve eigen decomposition for M. Li et al. (2017) select the eigenvectors
-      # associated with the smallest eigenvalues.
+
       eM <- eigen(M, symmetric = TRUE)
-      # Pick eigenvectors corresponding to the smallest eigenvalues
-      lambda_vals <- eM$values
-      idx_sorted <- order(lambda_vals, decreasing = FALSE) # ascending
-      W_new <- eM$vectors[, idx_sorted[1:m], drop=FALSE]
-      
-      # Check convergence
+      idx_sorted <- order(eM$values, decreasing = FALSE)
+      W_new <- eM$vectors[, idx_sorted[seq_len(m)], drop = FALSE]
+
       if (norm(W - W_new, type = "F") < tol) {
         W <- W_new
         break
       }
-      
       W <- W_new
     }
     W
   }
-  
-  # 1) Run WHM-TR to get the final W
-  W_final <- solveWHMTR(X, labels, m)
-  
-  # 2) Project the data
-  X_reduced <- X %*% W_final
-  
-  # 3) Build a discriminant_projector object
-  if (!requireNamespace("multivarious", quietly = TRUE)) {
-    stop("Package 'multivarious' not installed; needed for discriminant_projector.")
-  }
-  
-  # For sdev, we do col stdev of X_reduced
-  sdev_vec <- apply(X_reduced, 2, sd)
-  
-  dp_obj <- multivarious::discriminant_projector(
+
+  W_final <- solveWHMTR(Xp, y, ncomp)
+  X_reduced <- Xp %*% W_final
+  sdev_vec  <- apply(X_reduced, 2, sd)
+
+  multivarious::discriminant_projector(
     v       = W_final,
     s       = X_reduced,
     sdev    = sdev_vec,
-    preproc = multivarious::prep(multivarious::pass()),  # no-op
-    labels  = labels,
+    preproc = procres,
+    labels  = y,
+    method  = "whm_lda",
+    call    = cl,
     classes = "whm_lda"
   )
-  
-  dp_obj
 }

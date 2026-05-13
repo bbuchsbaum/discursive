@@ -1,45 +1,31 @@
 #' Uncorrelated Linear Discriminant Analysis (ULDA)
 #'
-#' This function performs Uncorrelated Linear Discriminant Analysis (ULDA) on a given dataset.
-#' ULDA seeks linear combinations of features that provide maximum class separation while ensuring
-#' that the resulting discriminant axes are mutually uncorrelated. It is particularly useful for
-#' dimensionality reduction and classification tasks in high-dimensional spaces.
+#' Performs Uncorrelated Linear Discriminant Analysis. ULDA seeks linear
+#' combinations of features that maximise class separation while ensuring the
+#' resulting discriminant axes are mutually uncorrelated.
 #'
-#' @param X A numeric matrix of size \code{n x d}, where \code{n} is the number of samples (rows)
-#'          and \code{d} is the number of features (columns).
-#' @param Y A factor or numeric vector of length \code{n} representing class labels for each sample.
-#'          Its length must match the number of rows of \code{X}. If numeric, it will be converted to a factor.
-#' @param preproc A preprocessing function from the \code{multivarious} package, such as \code{center()} or \code{scale()},
-#'        to apply to the data before ULDA. The default is \code{center()}, which centers the columns of \code{X}.
-#' @param mu A regularization parameter (currently unused, but included for extensibility). Default is 0.
-#' @param tol A numeric tolerance level. Singular values smaller than \code{tol} are considered negligible and discarded.
-#'        Default is \code{1e-6}.
-#' @return An object of class \code{discriminant_projector} from \code{multivarious}, which contains:
-#' \itemize{
-#'   \item \code{rotation}: The final projection matrix mapping the original feature space to the ULDA space.
-#'   \item \code{s}: The scores (projected data) of size \code{n x r}, where \code{r} is the reduced dimension.
-#'   \item \code{sdev}: The standard deviations of the projected components.
-#'   \item \code{labels}: The class labels.
-#'   \item \code{preproc}: The preprocessing object used.
-#'   \item \code{classes}: A string "ulda" indicating the type of projector.
-#' }
+#' @param X A numeric matrix of size `n x d` (rows = samples, columns = features).
+#' @param y A factor or numeric vector of length `n` of class labels. If
+#'   numeric, it is coerced to a factor.
+#' @param ncomp Integer. Number of discriminant components to retain. If
+#'   `NULL` (default), all components with positive singular values are kept.
+#' @param preproc A preprocessing function from `multivarious`. Defaults to
+#'   [multivarious::center()].
+#' @param mu Regularisation parameter (currently unused, kept for
+#'   extensibility). Default 0.
+#' @param tol Tolerance — singular values smaller than `tol` are discarded.
+#'   Default `1e-6`.
+#'
+#' @return A `discriminant_projector` object (subclass `"ulda"`).
 #'
 #' @details
-#' The procedure for ULDA can be summarized as follows:
-#' \enumerate{
-#'   \item \strong{Preprocessing}: The data \code{X} is preprocessed using the specified \code{preproc} function.
-#'   \item \strong{Class Statistics}: Compute class probabilities, class means, and the global mean of the preprocessed data.
-#'   \item \strong{Between-Class Scatter}: Form a matrix \code{Hb} that captures between-class differences weighted by class probabilities.
-#'   \item \strong{Total Scatter}: Form the total scatter matrix via the centered data \code{Ht}.
-#'   \item \strong{SVD of Total Scatter}: Perform Singular Value Decomposition (SVD) on \code{Ht} to capture the most significant directions of variability.
-#'   \item \strong{Projection onto Between-Class Structure}: Use SVD on a transformed version of \code{Hb} to find directions that maximize class separation.
-#'   \item \strong{Final Projection}: Combine the transformations to yield a projection matrix whose columns are discriminant vectors that are uncorrelated.
-#'   \item \strong{Projection of Data}: Project the preprocessed data onto these discriminant vectors to get the final scores.
-#' }
+#' The procedure: preprocess `X`; compute class probabilities, class means and
+#' the global mean; form between-class scatter `Hb`; centre data around the
+#' global mean to form `Ht`; SVD `Ht`, then SVD a transformed `Hb` to find
+#' discriminant directions; combine the transformations and project.
 #'
-#' This approach ensures that the resulting discriminants are uncorrelated linear combinations of features.
-#'
-#' @seealso \code{\link[multivarious]{prep}}, \code{\link[RSpectra]{eigs_sym}}, \code{\link[multivarious]{discriminant_projector}}
+#' @seealso [multivarious::prep()], [RSpectra::eigs_sym()],
+#'   [multivarious::discriminant_projector()]
 #'
 #' @importFrom multivarious prep
 #' @export
@@ -48,64 +34,62 @@
 #' \dontrun{
 #' data(iris)
 #' X <- as.matrix(iris[, 1:4])
-#' Y <- iris[, 5]
-#' res <- ulda(X, Y)
+#' y <- iris[, 5]
+#' res <- ulda(X, y)
 #' }
-ulda <- function(X, Y, preproc = center(), mu = 0, tol = 1e-6) {
-  # Basic argument checks
-  if (!is.matrix(X)) {
-    X <- as.matrix(X)
+ulda <- function(X, y, ncomp = NULL, preproc = multivarious::center(),
+                 mu = 0, tol = 1e-6) {
+  cl <- match.call()
+  if (!is.matrix(X)) X <- as.matrix(X)
+  if (nrow(X) != length(y)) {
+    stop("'y' must have the same length as the number of rows in 'X'.")
   }
-  if (nrow(X) != length(Y)) {
-    stop("'Y' must have the same length as the number of rows in 'X'.")
-  }
-  Y <- as.factor(Y)
+  y <- as.factor(y)
 
-  # Preprocess data
   procres <- multivarious::prep(preproc)
   Xp <- init_transform(procres, X)
 
-  nc <- nlevels(Y)
-  
-  # Class probabilities and means
-  cprobs <- table(Y) / length(Y)
-  cmeans <- group_means(Y, Xp)
-  gmean <- colMeans(Xp)
-  
-  # Construct Hb capturing between-class variation
-  Hb <- do.call(cbind, lapply(1:nc, function(i) {
+  nc <- nlevels(y)
+  cprobs <- table(y) / length(y)
+  cmeans <- group_means(y, Xp)
+  gmean  <- colMeans(Xp)
+
+  Hb <- do.call(cbind, lapply(seq_len(nc), function(i) {
     sqrt(cprobs[i]) * (cmeans[i, ] - gmean)
   }))
-  
-  # Center data around global mean for total scatter matrix
+
   Ht <- t(sweep(Xp, 2, gmean, "-"))
-  
-  # SVD of total scatter
+
   svd_ht <- svd(Ht)
-  keep <- which(svd_ht$d > tol)
-  
-  # Transform Hb using the pseudoinverse of Ht
+  keep   <- which(svd_ht$d > tol)
+
   Ut_scaled <- t(sweep(svd_ht$u[, keep, drop = FALSE], 2, svd_ht$d[keep], "/"))
   B <- Ut_scaled %*% Hb
-  
-  # SVD of B to find discriminant directions
-  svd_B <- svd(B)
+
+  svd_B  <- svd(B)
   keep_b <- which(svd_B$d > tol)
-  
-  # Compute final projection vectors
+
   U_scaled <- sweep(svd_ht$u[, keep, drop = FALSE], 2, svd_ht$d[keep], "/")
   vecs <- U_scaled %*% svd_B$u[, keep_b, drop = FALSE]
-  
-  # Project the data
+
+  if (!is.null(ncomp)) {
+    ncomp <- as.integer(ncomp)
+    if (ncomp < 1 || ncomp > ncol(vecs)) {
+      stop(sprintf("'ncomp' must be between 1 and %d.", ncol(vecs)))
+    }
+    vecs <- vecs[, seq_len(ncomp), drop = FALSE]
+  }
+
   s <- Xp %*% vecs
-  
-  # Return a discriminant_projector object
+
   multivarious::discriminant_projector(
-    v = vecs,
-    s = s,
-    sdev = apply(s, 2, sd),
+    v       = vecs,
+    s       = s,
+    sdev    = apply(s, 2, sd),
     preproc = procres,
-    labels = Y,
+    labels  = y,
+    method  = "ulda",
+    call    = cl,
     classes = "ulda"
   )
 }

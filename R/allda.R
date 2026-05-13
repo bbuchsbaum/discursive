@@ -137,9 +137,11 @@ update_similarity <- function(X, W, k, r, epsilon = 1e-10) {
 #' # result <- allda(X, y, ncomp = 2, k = 5)
 #' # W <- result$rotation
 #' # S <- result$S
-allda <- function(X, y, ncomp, k, r = 2, preproc=multivarious::center(),
+allda <- function(X, y, ncomp, k, r = 2, preproc = multivarious::center(),
                   max_iter = 30, tol = 1e-4, var_retained = 0.95, reg = 1e-5) {
-  
+
+  cl <- match.call()
+
   # Basic assertions
   assertthat::assert_that(ncomp > 0, msg="ncomp must be greater than 0")
   assertthat::assert_that(k > 0 && k < nrow(X), msg="k must be between 1 and n-1")
@@ -179,10 +181,16 @@ allda <- function(X, y, ncomp, k, r = 2, preproc=multivarious::center(),
   W_final <- pca_result$rot %*% W
   scores <- X %*% W_final
   # Use multivarious to create a discriminant_projector
-  multivarious::discriminant_projector(W_final, scores, apply(scores,2,sd),
-                                       preproc=procres,
-                                       labels=as.character(y),
-                                       adjacency=S,
-                                       classes="allda")
+  multivarious::discriminant_projector(
+    v        = W_final,
+    s        = scores,
+    sdev     = apply(scores, 2, sd),
+    preproc  = procres,
+    labels   = as.character(y),
+    adjacency = S,
+    method   = "allda",
+    call     = cl,
+    classes  = "allda"
+  )
 }
 

@@ -20,8 +20,8 @@ sim_data <- function(n_per_class, d, means, sd = 1) {
 method_fns <- list(
   olda = function(X, y) olda(X, y),
   ulda = function(X, y) ulda(X, y),
-  pca_lda = function(X, y, dp, di, dl) pca_lda(X, y, dp = dp, di = di, dl = dl),
-  gmmsd = function(X, y, dim) gmmsd(X, y, dim = dim),
+  pca_lda = function(X, y, dp, di, dl) pca_lda(X, y, ncomp = dl, dp = dp, di = di),
+  gmmsd = function(X, y, dim) gmmsd(X, y, ncomp = dim),
   fastolda = function(X, y) fastolda(X, y)
 )
 
