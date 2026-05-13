@@ -12,11 +12,11 @@ test_that("dgpage_discriminant works with random data", {
   y <- factor(rep(1:K, length.out=n))
   
   # Basic usage
-  dp <- dgpage_discriminant(X, y, r=2, alpha=1e-3, beta=1e-4,
+  dp <- dgpage_discriminant(X, y, ncomp=2, alpha=1e-3, beta=1e-4,
                             maxiter=5, verbose=FALSE)
   
   # Check classes
-  expect_s3_class(dp, "dgpage_projector")
+  expect_s3_class(dp, "dgpage_discriminant")
   expect_s3_class(dp, "discriminant_projector")
   
   # Check dimensions
@@ -50,10 +50,10 @@ test_that("dgpage_discriminant works on iris data", {
   y   <- factor(iris[idx, 5])
   
   set.seed(999)
-  dp <- dgpage_discriminant(X, y, r=2, alpha=1e-3, beta=1e-4,
+  dp <- dgpage_discriminant(X, y, ncomp=2, alpha=1e-3, beta=1e-4,
                             maxiter=5, verbose=FALSE)
   
-  expect_s3_class(dp, "dgpage_projector")
+  expect_s3_class(dp, "dgpage_discriminant")
   expect_s3_class(dp, "discriminant_projector")
   
   # Quick dimension checks

@@ -1,21 +1,22 @@
-test_that("The dtr classifier works properly on the iris data set", {
-  require('MASS')
+library(testthat)
+
+test_that("dtrda runs on the iris data set and returns a projector", {
   data(iris)
   set.seed(42)
-  n <- nrow(iris)
   X <- as.matrix(iris[, -5])
-  Y <- iris$Species
-  
-  
-  dtr_out <- dtr(X, Y)
-  predicted <- predict(dlda_out, iris[-train, -5])
-  
-  dlda_out2 <- dlda(x = iris[train, -5], y = iris[train, 5])
-  predicted2 <- predict(dlda_out2, iris[-train, -5])
-  
-  # Tests that the same labels result from the matrix and formula versions of
-  # the DLDA classifier
-  expect_equal(predicted$class, predicted2$class)
-  
-  expect_is(predicted$posterior, "matrix")
+  y <- iris$Species
+
+  res <- dtrda(X, y, ncomp = 2, alpha = 0.5)
+
+  expect_s3_class(res, "discriminant_projector")
+  expect_s3_class(res, "dtrda")
+  expect_equal(ncol(res$v), 2L)
+  expect_equal(nrow(res$s), nrow(X))
+})
+
+test_that("dtrda validates alpha and ncomp", {
+  X <- matrix(rnorm(40), 20, 2)
+  y <- factor(rep(1:2, 10))
+  expect_error(dtrda(X, y, ncomp = 1, alpha = 1.5), "alpha")
+  expect_error(dtrda(X, y, ncomp = 5, alpha = 0.5), "ncomp")
 })

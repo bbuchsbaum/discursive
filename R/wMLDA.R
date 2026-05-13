@@ -1,141 +1,106 @@
 #' Weighted Multi-label Linear Discriminant Analysis (wMLDA)
 #'
-#' This function implements the Weighted Multi-label Linear Discriminant Analysis (wMLDA)
-#' framework as described in the paper "A weighted linear discriminant analysis framework 
-#' for multi-label feature extraction" by Jianhua Xu et al. The wMLDA framework unifies several
-#' weight forms for multi-label LDA, including binary, correlation, entropy, fuzzy, and dependence-based
-#' weighting. Each weighting strategy determines how much each instance contributes 
-#' to each label, which in turn defines the between-class and within-class scatter matrices.
+#' Implements the wMLDA framework (Xu, 2017). Unifies several weighting forms
+#' for multi-label LDA (binary, correlation, entropy, fuzzy, dependence) that
+#' define how each instance contributes to each label.
 #'
-#' The final result is returned as a \code{discriminant_projector} object from the \code{multivarious} package,
-#' which can be integrated into downstream analytical workflows (e.g. applying the projection to new data).
+#' @param X A numeric matrix `n x d`.
+#' @param y A binary label matrix `n x q` where `y[i, k] = 1` if sample `i`
+#'   has label `k`, and `0` otherwise.
+#' @param ncomp Number of components to extract. Must be `<= q - 1`. Defaults
+#'   to `q - 1`.
+#' @param weight_method Character — one of `"binary"`, `"correlation"`,
+#'   `"entropy"`, `"fuzzy"`, `"dependence"`.
+#' @param max_iter_fuzzy Max iterations for `"fuzzy"` (default 100).
+#' @param tol_fuzzy Convergence tolerance for `"fuzzy"` (default `1e-6`).
+#' @param max_iter_dep Max epochs for `"dependence"` (default 100).
+#' @param preproc Preprocessing from `multivarious`. Defaults to
+#'   [multivarious::center()].
+#' @param reg Small regularisation added to `Sw` for invertibility. Default
+#'   `1e-9`.
+#' @param seed Random seed for reproducibility (default `NULL`).
 #'
-#' @param X A numeric matrix or data frame of size n x d, where n is the number of samples and d is the number of features.
-#' @param Y A binary label matrix of size n x q, where Y[i, k] = 1 if sample i has label k, and 0 otherwise.
-#' @param weight_method A character string specifying the weight form to use. One of:
-#'   \itemize{
-#'     \item "binary": Each relevant label gets weight 1, potentially over-counting for multi-label instances.
-#'     \item "correlation": Uses global label correlation to determine weights, possibly assigning positive weights to irrelevant labels.
-#'     \item "entropy": Weights are the reciprocal of the number of relevant labels, distributing weights evenly among relevant labels.
-#'     \item "fuzzy": A fuzzy membership approach that uses both label and feature information.
-#'     \item "dependence": A dependence-based form using Hilbert-Schmidt independence criterion (HSIC) and random block coordinate descent.
-#'   }
-#' @param ncomp The number of components (dimensions) to extract. Must be \eqn{\leq q-1}. Defaults to \code{q - 1}.
-#' @param max_iter_fuzzy Maximum number of iterations for the fuzzy method. Default 100.
-#' @param tol_fuzzy Convergence tolerance for the fuzzy method. Default 1e-6.
-#' @param max_iter_dep Maximum number of epochs for the dependence-based RBCDM method. Default 100.
-#' @param preproc A preprocessing step from \code{multivarious}, e.g. \code{center()} or \code{scale()}. Defaults to \code{center()}.
-#' @param reg A small regularization value added to \code{Sw} to ensure invertibility. Default 1e-9.
-#' @param seed Random seed for reproducibility. Default NULL (no setting of seed).
+#' @return A `discriminant_projector` (subclass `"wMLDA"`).
 #'
-#' @return A \code{discriminant_projector} object containing:
-#'   \item{rotation}{The projection matrix (d x ncomp) mapping original features into discriminant space.}
-#'   \item{s}{The projected scores of the training data (n x ncomp).}
-#'   \item{sdev}{Standard deviations of the scores.}
-#'   \item{labels}{The class (label) information.}
-#'   \item{preproc}{The preprocessing object.}
-#'   \item{classes}{The string "wMLDA".}
-#'
-#' @references 
-#' Xu, J. "A weighted linear discriminant analysis framework for multi-label feature extraction." 
-#' Knowledge-Based Systems, Volume 131, 2017, Pages 1-13.
+#' @references
+#' Xu, J. (2017). "A weighted linear discriminant analysis framework for
+#' multi-label feature extraction." *Knowledge-Based Systems*, 131, 1–13.
 #'
 #' @examples
 #' \dontrun{
-#' library(multivarious)
 #' set.seed(123)
-#' X <- matrix(rnorm(100*5), nrow=100, ncol=5)
-#' # Suppose we have 3 labels:
-#' Y <- matrix(0, nrow=100, ncol=3)
-#' # Assign random labels:
-#' for (i in 1:100) {
-#'   lab_count <- sample(1:3, 1)
-#'   chosen <- sample(1:3, lab_count)
-#'   Y[i, chosen] <- 1
+#' X <- matrix(rnorm(100*5), nrow = 100, ncol = 5)
+#' y <- matrix(0, nrow = 100, ncol = 3)
+#' for (i in seq_len(100)) {
+#'   chosen <- sample(1:3, sample(1:3, 1))
+#'   y[i, chosen] <- 1
 #' }
-#'
-#' res <- wMLDA(X, Y, weight_method="entropy", ncomp=2)
-#' str(res)
+#' res <- wMLDA(X, y, weight_method = "entropy", ncomp = 2)
+#' print(res)
 #' }
 #' @export
-wMLDA <- function(X, Y, weight_method=c("binary","correlation","entropy","fuzzy","dependence"),
-                  ncomp=NULL, max_iter_fuzzy=100, tol_fuzzy=1e-6, max_iter_dep=100,
-                  preproc = multivarious::center(), reg=1e-9, seed=NULL) {
-  assertthat::assert_that(is.matrix(X), is.matrix(Y))
+wMLDA <- function(X, y,
+                  ncomp = NULL,
+                  weight_method = c("binary", "correlation", "entropy", "fuzzy", "dependence"),
+                  max_iter_fuzzy = 100, tol_fuzzy = 1e-6, max_iter_dep = 100,
+                  preproc = multivarious::center(), reg = 1e-9, seed = NULL) {
+
+  cl <- match.call()
+  assertthat::assert_that(is.matrix(X), is.matrix(y))
   weight_method <- match.arg(weight_method)
-  
+
   n <- nrow(X)
   d <- ncol(X)
-  q <- ncol(Y)
-  if (is.null(ncomp)) {
-    ncomp <- q - 1
-  }
-  assertthat::assert_that(ncomp <= q-1 && ncomp >= 1)
-  
- 
+  q <- ncol(y)
+  if (is.null(ncomp)) ncomp <- q - 1
+  assertthat::assert_that(ncomp <= q - 1 && ncomp >= 1)
+
   if (!is.null(seed)) set.seed(seed)
-  
-  # Preprocessing using multivarious
+
   procres <- multivarious::prep(preproc)
   Xp <- multivarious::init_transform(procres, X)
-  
-  # Compute weight matrix
+
   Wmat <- switch(weight_method,
-                 "binary" = weight_binary(Y),
-                 "correlation" = weight_correlation(Y),
-                 "entropy" = weight_entropy(Y),
-                 "fuzzy" = weight_fuzzy(Xp, Y, max_iter=max_iter_fuzzy, tol=tol_fuzzy),
-                 "dependence" = weight_dependence(Xp, Y, max_iter=max_iter_dep))
-  
-  w_sum_inst <- rowSums(Wmat) # \hat{w}_i
-  
-  # Compute scatter matrices
+                 "binary"      = weight_binary(y),
+                 "correlation" = weight_correlation(y),
+                 "entropy"     = weight_entropy(y),
+                 "fuzzy"       = weight_fuzzy(Xp, y, max_iter = max_iter_fuzzy, tol = tol_fuzzy),
+                 "dependence"  = weight_dependence(Xp, y, max_iter = max_iter_dep))
+
+  w_sum_inst  <- rowSums(Wmat)
   w_sum_class <- colSums(Wmat)
-  hat_n <- 1/w_sum_class
+  hat_n <- 1 / w_sum_class
   hat_n[!is.finite(hat_n)] <- 0
   hat_W <- sweep(Wmat, 2, sqrt(hat_n), "*")
-  
+
   D_w <- diag(w_sum_inst, n, n)
-  
+
   M_sw <- D_w - hat_W %*% t(hat_W)
-  M_sb <- (hat_W %*% matrix(w_sum_inst, nrow=1)) - (w_sum_inst %*% t(w_sum_inst))/n
-  
-  # Project into feature space
+  M_sb <- (hat_W %*% matrix(w_sum_inst, nrow = 1)) - (w_sum_inst %*% t(w_sum_inst)) / n
+
   Sw_M <- t(Xp) %*% M_sw %*% Xp
   Sb_M <- t(Xp) %*% M_sb %*% Xp
-  
-  # Solve generalized eigenvalue problem: Sb_M v = lambda Sw_M v
-  # Regularize Sw_M
+
   Sw_M_reg <- Sw_M + diag(reg, d, d)
-  
+
   M <- tryCatch(solve(Sw_M_reg, Sb_M),
-                error=function(e) {
-                  # fallback to pseudo-inverse if needed
-                  pinvSw <- MASS::ginv(Sw_M_reg)
-                  pinvSw %*% Sb_M
-                })
-  
-  eig <- eigen(M, symmetric=TRUE)
-  vals <- eig$values
-  vecs <- eig$vectors
-  
-  idx <- order(vals, decreasing=TRUE)
-  vals <- vals[idx]
-  vecs <- vecs[, idx, drop=FALSE]
-  
-  # Select top ncomp
-  W <- vecs[, 1:ncomp, drop=FALSE]
-  
-  # Scores
+                error = function(e) MASS::ginv(Sw_M_reg) %*% Sb_M)
+
+  eig <- eigen(M, symmetric = TRUE)
+  idx <- order(eig$values, decreasing = TRUE)
+  vecs <- eig$vectors[, idx, drop = FALSE]
+
+  W <- vecs[, seq_len(ncomp), drop = FALSE]
   s <- Xp %*% W
-  
-  # Return a discriminant_projector object
+
   multivarious::discriminant_projector(
-    v = W,
-    s = s,
-    sdev = apply(s, 2, sd),
+    v       = W,
+    s       = s,
+    sdev    = apply(s, 2, sd),
     preproc = procres,
-    labels = Y,
+    labels  = y,
+    method  = "wMLDA",
+    call    = cl,
     classes = "wMLDA"
   )
 }
@@ -184,12 +149,11 @@ weight_entropy <- function(Y) {
 
 #' @keywords internal
 #' @noRd
-weight_fuzzy <- function(X, Y, max_iter=100, tol=1e-6) {
-  # Initialize W using entropy-based weights
+weight_fuzzy <- function(X, Y, max_iter = 100, tol = 1e-6) {
   W <- weight_entropy(Y)
   l <- nrow(Y)
   q <- ncol(Y)
-  
+
   update_means <- function(X, W) {
     w2 <- W^2
     denom <- colSums(w2)
@@ -199,31 +163,30 @@ weight_fuzzy <- function(X, Y, max_iter=100, tol=1e-6) {
     M[!non_zero, ] <- 0
     M
   }
-  
+
   M <- update_means(X, W)
   oldW <- W
   for (iter in 1:max_iter) {
-    # dist(i,k)^2
     dist2 <- matrix(0, l, q)
     for (k in 1:q) {
-      diff <- sweep(X, 2, M[k,], "-")
-      dist2[,k] <- rowSums(diff^2)
+      diff <- sweep(X, 2, M[k, ], "-")
+      dist2[, k] <- rowSums(diff^2)
     }
     dist2[dist2 < 1e-12] <- 1e-12
     for (i in 1:l) {
-      rel_labels <- which(Y[i,]==1)
-      if (length(rel_labels)>0) {
-        num <- Y[i,rel_labels]/dist2[i,rel_labels]
+      rel_labels <- which(Y[i, ] == 1)
+      if (length(rel_labels) > 0) {
+        num <- Y[i, rel_labels] / dist2[i, rel_labels]
         denom <- sum(num)
-        if (denom>0) {
-          W[i,] <- 0
-          W[i,rel_labels] <- num/denom
+        if (denom > 0) {
+          W[i, ] <- 0
+          W[i, rel_labels] <- num / denom
         } else {
-          W[i,] <- 0
-          W[i,rel_labels] <- 1/length(rel_labels)
+          W[i, ] <- 0
+          W[i, rel_labels] <- 1 / length(rel_labels)
         }
       } else {
-        W[i,] <- 0
+        W[i, ] <- 0
       }
     }
     M <- update_means(X, W)
@@ -231,45 +194,39 @@ weight_fuzzy <- function(X, Y, max_iter=100, tol=1e-6) {
     if (diff_val < tol) break
     oldW <- W
   }
-  
   W
 }
 
 #' @keywords internal
 #' @noRd
-weight_dependence <- function(X, Y, max_iter=100) {
+weight_dependence <- function(X, Y, max_iter = 100) {
   l <- nrow(Y)
-  # HSIC-based RBCDM
-  u <- rep(1,l)
-  H <- diag(l) - (u %*% t(u))/l
+  u <- rep(1, l)
+  H <- diag(l) - (u %*% t(u)) / l
   XXt <- X %*% t(X)
   Theta <- H %*% XXt %*% H
-  
-  # Initialize W with entropy:
+
   W <- weight_entropy(Y)
-  
+
   for (epoch in 1:max_iter) {
     perm_idx <- sample(l)
     W_old <- W
-    yw <- Y*W
+    yw <- Y * W
     for (idx in perm_idx) {
-      yi <- Y[idx,]
-      rel_labels <- which(yi==1)
-      if (length(rel_labels)==0) next
-      # g_i(k) = sum_j Theta[i,j]*yw[j,k]
+      yi <- Y[idx, ]
+      rel_labels <- which(yi == 1)
+      if (length(rel_labels) == 0) next
       gvals <- numeric(length(rel_labels))
       for (r in seq_along(rel_labels)) {
         k <- rel_labels[r]
-        gvals[r] <- sum(Theta[idx,]*yw[,k])
+        gvals[r] <- sum(Theta[idx, ] * yw[, k])
       }
       k0 <- rel_labels[which.max(gvals)]
       w_new <- rep(0, ncol(Y))
       w_new[k0] <- 1
-      W[idx,] <- w_new
+      W[idx, ] <- w_new
     }
-    
-    if (all(W==W_old)) break
+    if (all(W == W_old)) break
   }
-  
   W
 }

@@ -51,7 +51,7 @@ NULL
 #' Fit DGPAGE and return a discriminant_projector
 #'
 #' This function wraps \code{\link{dgpage_fit}} but returns a \code{discriminant_projector}
-#' (subclass \code{"dgpage_projector"}) so that you can use the same \code{predict}
+#' (subclass \code{"dgpage_discriminant"}) so that you can use the same \code{predict}
 #' interface as for other discriminant methods.
 #'
 #' **Algorithm**:
@@ -71,21 +71,21 @@ NULL
 #' }
 #'
 #' **NOTE**: The \code{dgpage_predict} for 1-NN classification can now be replaced by
-#' a new S3 \code{predict} method that lives under \code{dgpage_projector}.
+#' a new S3 \code{predict} method that lives under \code{dgpage_discriminant}.
 #'
 #' @param X A numeric matrix of size n x d (training samples).
 #' @param y A factor (or coercible to factor) of length n (class labels).
+#' @param ncomp The target dimension (number of discriminant directions).
 #' @param S The n x n similarity graph. If \code{NULL}, we compute it from \code{X,y}.
 #' @param D The n x n diversity graph. If \code{NULL}, we compute it from \code{X,y}.
-#' @param r The target dimension (number of discriminant directions).
-#' @param alpha,beta Hyperparameters in Eq. (12). 
+#' @param alpha,beta Hyperparameters in Eq. (12).
 #' @param maxiter,tol,verbose Passed to \code{\link{dgpage_fit}}.
 #' @param q If \code{S} or \code{D} is \code{NULL}, we use \code{q} in
 #'   \code{\link{compute_similarity_graph}}. Default 1.5.
 #' @param seed Optional seed passed to \code{dgpage_fit} for reproducible
 #'   initialization.
 #'
-#' @return An object of class \code{c("dgpage_projector","discriminant_projector","bi_projector",...)}
+#' @return An object of class \code{c("dgpage_discriminant","discriminant_projector","bi_projector",...)}
 #'   containing:
 #'   \itemize{
 #'     \item \code{v}        : the d x r loadings
@@ -101,7 +101,7 @@ NULL
 #' \dontrun{
 #'   X <- matrix(rnorm(100*5), 100, 5)
 #'   y <- factor(rep(1:2, each=50))
-#'   dp <- dgpage_discriminant(X, y, r=2)
+#'   dp <- dgpage_discriminant(X, y, ncomp = 2)
 #'   preds_class  <- predict(dp, new_data=X, method="lda", type="class")
 #'   preds_1nn    <- predict(dp, new_data=X, method="1nn")
 #'   mean(preds_class == y)
@@ -109,75 +109,63 @@ NULL
 #' }
 #' @export
 dgpage_discriminant <- function(X, y,
-                                S      = NULL,
-                                D      = NULL,
-                                r      = 2,
-                                alpha  = 1e-3,
-                                beta   = 1e-5,
-                                maxiter= 20,
-                                tol    = 1e-5,
-                                verbose= TRUE,
-                                q      = 1.5,
-                                seed   = NULL)
+                                ncomp   = 2,
+                                S       = NULL,
+                                D       = NULL,
+                                alpha   = 1e-3,
+                                beta    = 1e-5,
+                                maxiter = 20,
+                                tol     = 1e-5,
+                                verbose = TRUE,
+                                q       = 1.5,
+                                seed    = NULL)
 {
+  cl <- match.call()
   y <- as.factor(y)
   n <- nrow(X)
   d <- ncol(X)
   if (length(y) != n) {
     stop("Length of y must match nrow(X).")
   }
-  
-  # Possibly build S, D:
-  if (is.null(S)) {
-    S <- compute_similarity_graph(X, y, q=q)
-  }
-  if (is.null(D)) {
-    D <- compute_diversity_graph(X, y)
-  }
-  
-  # Fit DGPAGE:
-  fitres <- dgpage_fit(X, S=S, D=D, r=r,
-                       alpha=alpha, beta=beta,
-                       maxiter=maxiter, tol=tol,
-                       verbose=verbose, seed=seed)
-  
-  # Build training scores: s = X %*% P
-  # fitres$P is d x r
-  s_mat <- X %*% fitres$P  # shape (n x r)
-  # sdev => stdev of each column
+
+  if (is.null(S)) S <- compute_similarity_graph(X, y, q = q)
+  if (is.null(D)) D <- compute_diversity_graph(X, y)
+
+  fitres <- dgpage_fit(X, S = S, D = D, r = ncomp,
+                       alpha = alpha, beta = beta,
+                       maxiter = maxiter, tol = tol,
+                       verbose = verbose, seed = seed)
+
+  s_mat    <- X %*% fitres$P
   sdev_vec <- apply(s_mat, 2, sd)
-  
-  # Create a discriminant_projector object with an extra class "dgpage_projector"
-  # We'll define it similarly to how you'd build any discriminant_projector:
-  dp <- discriminant_projector(
-    v       = fitres$P,     # loadings
-    s       = s_mat,        # training scores
-    sdev    = sdev_vec,     # stdev
-    labels  = y,            # the training labels
-    classes = "dgpage_projector"
+
+  dp <- multivarious::discriminant_projector(
+    v       = fitres$P,
+    s       = s_mat,
+    sdev    = sdev_vec,
+    labels  = y,
+    method  = "dgpage_discriminant",
+    call    = cl,
+    classes = "dgpage_discriminant"
   )
-  
-  # Store additional fields from the fit:
+
   dp$W         <- fitres$W
   dp$objective <- fitres$objective
   dp$alpha     <- alpha
   dp$beta      <- beta
   dp$iter      <- fitres$iter
-  
-  # You might also store fitres$Z or S, D, etc. if you want them for debugging:
   dp$S <- S
   dp$D <- D
   dp$Z <- fitres$Z
-  
-  # Return it
+
   dp
 }
 
 # -------------------------------------------------------------------
-#  Predict method for "dgpage_projector"
+#  Predict method for "dgpage_discriminant"
 # -------------------------------------------------------------------
 
-#' Predict method for a \code{dgpage_projector} object
+#' Predict method for a \code{dgpage_discriminant} object
 #'
 #' Extends the discriminant methods with a \code{method="1nn"} option that
 #' uses \pkg{Rnanoflann} for 1-nearest-neighbor classification in the projected space.
@@ -186,7 +174,7 @@ dgpage_discriminant <- function(X, y,
 #' standard \code{\link{predict.discriminant_projector}} method for linear discriminant
 #' or Euclidean nearest-mean classification in subspace.
 #'
-#' @param object A \code{dgpage_projector} object.
+#' @param object A \code{dgpage_discriminant} object.
 #' @param new_data A numeric matrix (m x d).
 #' @param method One of \code{c("1nn","lda","euclid")}. Default \code{"1nn"}.
 #' @param type If \code{method="1nn"}, we only return \code{"class"}. 
@@ -206,7 +194,7 @@ dgpage_discriminant <- function(X, y,
 #' @export
 #' @import Rnanoflann
 #' @importFrom multivarious predict.discriminant_projector
-predict.dgpage_projector <- function(object,
+predict.dgpage_discriminant <- function(object,
                                      new_data,
                                      method = c("1nn","lda","euclid"),
                                      type   = c("class","prob"),
@@ -633,7 +621,7 @@ dgpage_fit <- function(X, S, D, r = 10,
 #' @return A vector of length \eqn{m} with predicted labels.
 #' @details This helper is retained for backward compatibility.  The
 #'   recommended approach is to call \code{predict()} on the
-#'   \code{dgpage_projector} object returned by \code{dgpage_discriminant}.
+#'   \code{dgpage_discriminant} object returned by \code{dgpage_discriminant}.
 #' @export
 #' @seealso \code{\link[Rnanoflann]{nn}}
 #' @examples
@@ -684,25 +672,29 @@ dgpage_predict <- function(model, Xtest, k=1, method="euclidean") {
   return(preds)
 }
 
+#' Print a `dgpage_discriminant` object
+#'
+#' Prints the standard `discriminant_projector` header followed by
+#' DGPAGE-specific fields (adjacency size, objective, hyperparameters).
+#'
+#' @param x A `dgpage_discriminant` object.
+#' @param ... Additional arguments (ignored).
+#'
+#' @return The input `x`, invisibly.
+#' @method print dgpage_discriminant
 #' @export
-#' Print a dgpage_projector
-#'
-#' Displays a brief summary of a \code{dgpage_projector} including the
-#' size of the learned adjacency graph and stored hyperparameters.
-#'
-#' @param x A \code{dgpage_projector} object.
-#' @param ... Additional arguments passed to
-#'   \code{\link{print.discriminant_projector}}.
-#'
-#' @return The input object \code{x}, invisibly.
-#' @method print dgpage_projector
-#' @export
-print.dgpage_projector <- function(x, ...) {
-  cat("A 'dgpage_projector' object (subclass of 'discriminant_projector').\n")
-  cat("Learned adjacency graph W of size:", nrow(x$W), "x", ncol(x$W), "\n")
-  cat(sprintf("Objective: %.3f\n", x$objective))
-  cat("alpha:", x$alpha, " beta:", x$beta, "\n")
+print.dgpage_discriminant <- function(x, ...) {
   NextMethod()
+  if (!is.null(x$W)) {
+    cat(sprintf("  Adjacency:  %d x %d\n", nrow(x$W), ncol(x$W)))
+  }
+  if (!is.null(x$objective)) {
+    cat(sprintf("  Objective:  %.3f\n", x$objective))
+  }
+  if (!is.null(x$alpha) || !is.null(x$beta)) {
+    cat(sprintf("  alpha = %g  beta = %g\n",
+                x$alpha %||% NA, x$beta %||% NA))
+  }
   invisible(x)
 }
 
