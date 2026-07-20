@@ -2,7 +2,7 @@
 % Please edit documentation in R/em_soft_lda.R
 \name{soft_lr}
 \alias{soft_lr}
-\title{Partially Supervised Logistic Regression with Soft Labels (Robust Version)}
+\title{Evidential-EM Logistic Regression with Soft Labels}
 \usage{
 soft_lr(
   X,
@@ -15,30 +15,31 @@ soft_lr(
 )
 }
 \arguments{
-\item{X}{A numeric matrix n x d.}
+\item{X}{Numeric matrix with observations in rows and features in columns.}
 
-\item{PL}{A numeric matrix n x K of plausibilities.}
+\item{PL}{Nonnegative numeric matrix with one plausibility row per
+observation and one column per class. Every row and column must have
+positive mass.}
 
-\item{max_iter}{Integer, max E²M iterations. Default 100.}
+\item{max_iter}{Positive integer maximum number of E²M iterations per start.}
 
-\item{tol}{Tolerance for convergence in log-likelihood. Default 1e-6.}
+\item{tol}{Positive relative convergence tolerance for the penalized
+evidential log-likelihood.}
 
-\item{lambda}{Ridge regularization parameter for coefficients. Default 1e-5.}
+\item{lambda}{Nonnegative ridge penalty applied to all coefficients.}
 
-\item{n_starts}{Number of initializations to try. Default 3.}
+\item{n_starts}{Positive integer number of random initializations.}
 
-\item{verbose}{Logical, if TRUE prints progress. Default FALSE.}
+\item{verbose}{Logical; print iteration diagnostics when \code{TRUE}.}
 }
 \value{
-A list:
-\item{beta}{(d+1) x (K-1) coefficient matrix}
-\item{zeta}{Posterior class probabilities n x K}
-\item{loglik}{Final log-likelihood}
-\item{iter}{Iterations}
+A list containing coefficient matrix \code{beta}, posterior memberships
+\code{zeta}, final unpenalized evidential log-likelihood \code{loglik}, and accepted
+E²M iteration count \code{iter}.
 }
 \description{
-Fits a logistic regression model using E²M with soft labels, adding robustness:
-multiple initial attempts, ridge penalty, stable line search, and optional verbosity.
+Fits multinomial logistic regression using E²M with soft labels,
+a ridge penalty, and a monotone Newton line search.
 }
 \references{
 Quost, B., Denoeux, T., Li, S. (2017). Parametric classification with soft labels
