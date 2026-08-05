@@ -20,10 +20,13 @@
 
 \item{method}{One of \code{c("1nn","lda","euclid")}. Default \code{"1nn"}.}
 
-\item{type}{If \code{method="1nn"}, we only return \code{"class"}.
+\item{type}{If \code{method="1nn"}, only \code{"class"} is supported and
+other values produce an error.
 If \code{method \%in\% c("lda","euclid")}, we can do \code{"class"} or \code{"prob"}.}
 
-\item{k}{Number of neighbors if using \code{method="1nn"}. Default 1 (which is actually 1NN).}
+\item{k}{Number of neighbors if using \code{method="1nn"}. Default 1. For
+\code{k > 1} a majority vote over the k nearest training samples is taken,
+with ties broken by factor level order.}
 
 \item{...}{Not used (or pass \code{method="lda"} / \code{type="prob"}).}
 }
@@ -36,13 +39,13 @@ If \code{method="lda"} or \code{"euclid"} and \code{type="prob"}, an
 }
 \description{
 Extends the discriminant methods with a \code{method="1nn"} option that
-uses \pkg{Rnanoflann} for 1-nearest-neighbor classification in the projected space.
+uses \pkg{Rnanoflann} for k-nearest-neighbor classification in the projected space.
 }
 \details{
 Otherwise, if \code{method} is \code{"lda"} or \code{"euclid"}, we fall back to the
-standard \code{\link{predict.discriminant_projector}} method for linear discriminant
+standard \code{multivarious::predict.discriminant_projector()} method for linear discriminant
 or Euclidean nearest-mean classification in subspace.
 }
 \seealso{
-\code{\link{predict.discriminant_projector}}
+\code{multivarious::predict.discriminant_projector()}
 }

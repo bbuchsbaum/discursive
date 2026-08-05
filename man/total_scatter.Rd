@@ -2,19 +2,20 @@
 % Please edit documentation in R/scatter.R
 \name{total_scatter}
 \alias{total_scatter}
-\title{Calculate Total Scatter Matrix}
+\title{Calculate total scatter}
 \usage{
 total_scatter(X, mu)
 }
 \arguments{
-\item{X}{A numeric matrix (n x d).}
+\item{X}{A numeric matrix with samples in rows and features in columns.}
 
-\item{mu}{A numeric vector of length d representing the overall mean.}
+\item{mu}{A finite numeric vector of length \code{ncol(X)}.}
 }
 \value{
-A numeric (d x d) total scatter matrix.
+A numeric feature-by-feature total scatter matrix.
 }
 \description{
-Computes the total scatter matrix \eqn{S_t = \sum_i (x_i - \mu)(x_i - \mu)^T}.
+Computes the unnormalized total scatter
+\deqn{S_t = \sum_i (x_i - \mu)(x_i - \mu)^T.}
 }
 \keyword{internal}

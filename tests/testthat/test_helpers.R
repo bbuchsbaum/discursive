@@ -12,15 +12,8 @@ test_that("group_means handles various group sizes", {
   X2 <- matrix(c(7,8, 9,10), ncol = 2, byrow = TRUE)
   y2 <- factor(c("C", "D"))
   gm2 <- group_means(y2, X2)
-  expect_equal(gm2, X2)
+  expect_equal(unname(gm2), X2)
   expect_equal(rownames(gm2), c("C", "D"))
-})
-
-# Test compute_Htdiff simply mirrors t(diff(X))
-
-test_that("compute_Htdiff matches transposed differences", {
-  X <- matrix(1:6, nrow = 3, ncol = 2)
-  expect_equal(compute_Htdiff(X), t(diff(X)))
 })
 
 # Basic wMLDA functionality with binary weighting
@@ -36,6 +29,6 @@ test_that("wMLDA runs with binary weights", {
   expect_s3_class(res, "discriminant_projector")
   expect_equal(dim(res$v), c(ncol(X), 1))
   expect_equal(dim(res$s), c(nrow(X), 1))
-  expect_equal(res$labels, y)
+  expect_equal(unname(res$label_matrix), y)
+  expect_length(res$labels, nrow(y))
 })
-

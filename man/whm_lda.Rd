@@ -2,66 +2,98 @@
 % Please edit documentation in R/whm_lda.R
 \name{whm_lda}
 \alias{whm_lda}
-\title{Weighted Harmonic Mean of Trace Ratios for Multiclass Discriminant Analysis}
+\title{Weighted Harmonic Mean of Trace Ratios Discriminant Analysis}
 \usage{
-whm_lda(X, labels, m)
+whm_lda(
+  X,
+  labels,
+  m,
+  max_iter = 100L,
+  tol = 1e-06,
+  initial_W = NULL,
+  seed = NULL,
+  denominator_tol = 1e-12
+)
 }
 \arguments{
-\item{X}{A numeric matrix of size \code{n x d}, where \code{n} is the number of samples and \code{d} is the number of features.
-Rows correspond to samples and columns to features.}
+\item{X}{Numeric matrix or data frame with samples in rows and features in
+columns. It must contain at least two columns and only finite values.}
 
-\item{labels}{A vector of length \code{n} containing the class labels of the samples. Can be a factor or a numeric vector.}
+\item{labels}{A non-missing vector with one class label per row of \code{X} and
+at least two observed classes. Unused factor levels are dropped.}
 
-\item{m}{The number of dimensions to reduce to, i.e., the number of columns in the projection matrix \eqn{W}.}
+\item{m}{Positive integer number of projection dimensions. It must be less
+than \code{ncol(X)}.}
+
+\item{max_iter}{Positive integer maximum number of WHM-TR updates.}
+
+\item{tol}{Convergence tolerance in \verb{(0, 1)}. Convergence is measured by the
+Frobenius distance between successive projection matrices, so it is
+invariant to sign changes and rotations of the fitted basis.}
+
+\item{initial_W}{Optional finite \code{ncol(X)} by \code{m} full-rank initialization.
+Its column space is retained and its columns are orthonormalized. The
+default uses a random orthonormal basis.}
+
+\item{seed}{Optional nonnegative integer used for random initialization.
+The caller's random-number-generator state is restored after fitting.
+It must be \code{NULL} when \code{initial_W} is supplied.}
+
+\item{denominator_tol}{Relative tolerance in \verb{(0, 1)} for projected
+pairwise between-class traces. An iteration is stopped with an informative
+error when a denominator is not finite or is numerically zero relative to
+the corresponding full-space between-class trace.}
 }
 \value{
-A \code{\link[multivarious]{discriminant_projector}} object with:
-\itemize{
-\item \code{v}: The projection matrix \eqn{W} of size \code{d x m}.
-\item \code{s}: The transformed data \eqn{X W} of size \code{n x m}.
-\item \code{sdev}: The standard deviations of each column in \code{s}.
-\item \code{labels}: The original labels if provided (as a factor).
-\item \code{classes}: set to \code{"whm_lda"}.
+A \code{\link[multivarious:discriminant_projector]{multivarious::discriminant_projector()}} with class \code{"whm_lda"}.
+In addition to the standard projector fields, it contains:
+\describe{
+\item{objective, objective_history}{The final WHM-TR objective and its
+values at initialization and after every update.}
+\item{iterations, converged, projector_change}{Iteration count,
+convergence flag, and final subspace change.}
+\item{stationarity_residual}{Relative KKT residual of the final
+subspace.}
+\item{class_counts, pair_classes, pair_weights}{Observed class sizes,
+class-pair labels, and the paper's \code{n_j + n_k} pair weights.}
+\item{pair_denominators, pair_objectives}{Final projected between-class
+traces and weighted pairwise objective terms.}
+\item{m, max_iter, tol, denominator_tol, seed}{Fitted dimensions and
+solver controls.}
 }
 }
 \description{
-This function implements the Weighted Harmonic Mean of Trace Ratios (WHM-TR) method for
-multiclass discriminant analysis as described in the referenced paper. The goal is to find a linear
-transformation \eqn{W} that improves class separability by minimizing the weighted harmonic mean of
-trace ratios derived from the between-class and within-class scatter matrices.
+Fits the weighted harmonic mean of trace ratios (WHM-TR) method of Li et
+al. (2017). WHM-TR emphasizes poorly separated class pairs by minimizing a
+weighted sum of pairwise within- to between-class trace ratios.
 }
 \details{
-The algorithm implemented here follows the approach described in Li et al. (2017),
-"Beyond Trace Ratio: Weighted Harmonic Mean of Trace Ratios for Multiclass Discriminant Analysis."
-The method proceeds as follows:
-\enumerate{
-\item Compute the between-class (\eqn{S_b}) and within-class (\eqn{S_w}) scatter matrices.
-\item Initialize a projection matrix \eqn{W} (of size \code{d x m}) randomly and ensure it is orthonormal.
-\item Iteratively update \eqn{W} by minimizing the weighted harmonic mean of trace ratios. This involves:
-\itemize{
-\item Evaluating pairs of classes and computing partial scatter matrices for each pair.
-\item Updating \eqn{W} by solving an eigen-decomposition problem derived from these intermediate matrices.
-}
-\item Stop when convergence is reached (based on a tolerance) or after a maximum number of iterations.
-}
+For classes \code{j} and \code{k}, let \code{S_w^{jk}} be their combined within-class
+scatter, let \code{mu_j} and \code{mu_k} be their means, and define
+\deqn{S_b^{jk} = \frac{n_j n_k}{n_j + n_k}
+  (\mu_j-\mu_k)(\mu_j-\mu_k)^T.}
+The fitted orthonormal matrix \code{W} minimizes
+\deqn{\sum_{j<k} (n_j+n_k)
+  \frac{\mathrm{tr}(W^T S_w^{jk} W)}
+       {\mathrm{tr}(W^T S_b^{jk} W)}}
+subject to \verb{W^T W = I}. Each update constructs Equation 31 of Li et al.
+(2017) and selects its \code{m} smallest-eigenvalue eigenvectors.
 
-After convergence, \eqn{W} is returned in a standard \code{discriminant_projector} format, along with
-the reduced data \eqn{XW} in \code{s}.
+Class means, counts, and within-class scatters are computed once. Each
+iteration then uses cached scatter matrices and the rank-one form of every
+between-class scatter.
 }
 \examples{
-\dontrun{
-data(iris)
-X <- as.matrix(iris[,1:4])
-labels <- iris[,5]
-proj <- whm_lda(X, labels, m=2)
-print(proj)
-# Now you can do:
-# new_data <- ...
-# projected <- project(proj, new_data)
-}
-
+X <- as.matrix(iris[, 1:4])
+fit <- whm_lda(X, iris$Species, m = 2, seed = 1)
+multivarious::project(fit, X[1:5, , drop = FALSE])
 }
 \references{
-Li, Zhihui, et al. "Beyond Trace Ratio: Weighted Harmonic Mean of Trace Ratios for Multiclass Discriminant Analysis."
-\emph{IEEE Transactions on Knowledge and Data Engineering (TKDE)}, 2017.
+Li, Z., Nie, F., Chang, X., & Yang, Y. (2017). Beyond Trace Ratio:
+Weighted Harmonic Mean of Trace Ratios for Multiclass Discriminant
+Analysis. \emph{IEEE Transactions on Knowledge and Data Engineering}, 29(10),
+2100--2110. \doi{10.1109/TKDE.2017.2728531}
+}
+\seealso{
+\code{\link[multivarious:discriminant_projector]{multivarious::discriminant_projector()}}
 }

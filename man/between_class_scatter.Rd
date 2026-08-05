@@ -2,19 +2,20 @@
 % Please edit documentation in R/scatter.R
 \name{between_class_scatter}
 \alias{between_class_scatter}
-\title{Calculate Between-Class Scatter Matrix (via C++)}
+\title{Calculate between-class scatter}
 \usage{
 between_class_scatter(X, Y)
 }
 \arguments{
-\item{X}{A numeric matrix (n x d).}
+\item{X}{A numeric matrix with samples in rows and features in columns.}
 
-\item{Y}{A factor or numeric vector of length n.}
+\item{Y}{An atomic vector or factor of class labels with length \code{nrow(X)}.}
 }
 \value{
-A numeric (d x d) between-class scatter matrix.
+A numeric feature-by-feature between-class scatter matrix.
 }
 \description{
-Computes the between-class scatter matrix using a C++ function \code{betweenSScpp}.
+Computes the unnormalized between-class scatter from class counts and means:
+\deqn{S_b = \sum_k n_k (\bar{x}_k - \bar{x})(\bar{x}_k - \bar{x})^T.}
 }
 \keyword{internal}

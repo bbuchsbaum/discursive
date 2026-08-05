@@ -4,20 +4,31 @@
 \alias{update_W}
 \title{Update Transformation Matrix W}
 \usage{
-update_W(X, L_A, ncomp, reg = 1e-05)
+update_W(X, L_A, ncomp, reg = 1e-05, whitener = NULL)
 }
 \arguments{
-\item{X}{Data matrix of size n x d (n samples, d features).}
+\item{X}{Data matrix of size n x d (n samples, d features), typically PCA-reduced.}
 
 \item{L_A}{Laplacian matrix of size n x n.}
 
-\item{ncomp}{Reduced dimension.}
+\item{ncomp}{The desired reduced dimension (number of eigenvectors to select).}
 
-\item{reg}{Regularization term to ensure invertibility of St (default is 1e-5).}
+\item{reg}{Non-negative relative regularization multiplier. The diagonal ridge
+is \code{reg * mean(diag(t(X) \%*\% X))}, making it independent of measurement
+units (default is 1e-5).}
+
+\item{whitener}{Optional cached whitening information created by
+\code{.prepare_allda_whitener()} for the same \code{X} and \code{reg}.}
 }
 \value{
-Transformation matrix W (d x ncomp).
+The transformation matrix W (d x ncomp) containing the selected eigenvectors
+as columns, normalized under the relatively regularized total scatter.
 }
 \description{
-Solve for the transformation matrix W using eigen-decomposition.
+Solves the generalized eigenvalue problem
+\verb{t(X) \%*\% L_A \%*\% X \%*\% W = lambda \%*\% (t(X) \%*\% X + rho I) \%*\% W},
+where \code{rho = reg * mean(diag(t(X) \%*\% X))},
+to find the optimal transformation matrix W that minimizes the ALLDA objective.
+It finds the eigenvectors corresponding to the smallest eigenvalues.
 }
+\keyword{internal}

@@ -4,13 +4,7 @@
 \alias{DGPAGE}
 \title{DGPAGE: Discriminative and Geometry-Preserving Adaptive Graph Embedding}
 \description{
-This package-like script provides a complete, \emph{faithful}, \emph{working out-of-the-box} R implementation
-of the \strong{DGPAGE} method described in:
-}
-\details{
-J. Gou, X. Yuan, Y. Xue, L. Du, J. Yu, S. Xia, Y. Zhang."Discriminative and Geometry-Preserving Adaptive Graph Embedding for dimensionality reduction."Information Sciences, 2022.
-
-\strong{DGPAGE} systematically integrates:
+An R implementation of the \strong{DGPAGE} method. DGPAGE systematically integrates:
 \enumerate{
 \item Manually constructed \emph{similarity} and \emph{diversity} graphs (see Eqs. (4) and (7) in the paper),
 \item An adaptively learned adjacency graph with diversity-based regularization (Eqs. (8)-(11)),
@@ -18,31 +12,26 @@ J. Gou, X. Yuan, Y. Xue, L. Du, J. Yu, S. Xia, Y. Zhang."Discriminative and Geom
 (Eq. (12)), and
 \item An alternating optimization algorithm (Algorithm 1 in the paper) that solves for these parameters.
 }
-
+}
+\details{
 The main user-facing functions are:
 \itemize{
 \item \code{dgpage_fit()}: fits the DGPAGE model on training data,
-\item \code{dgpage_predict()}: obtains predictions (via 1-NN) on new test data,
+\item \code{dgpage_predict()}: obtains predictions (via k-NN) on new test data,
 \item \code{compute_similarity_graph()}: constructs the manual similarity graph \eqn{G_S} (Eq. (4)),
 \item \code{compute_diversity_graph()}: constructs the manual diversity graph \eqn{G_D} (Eq. (7)).
 }
 
-The code below relies on base R (for matrix operations) and uses the
-\strong{Rnanoflann} package for 1-nearest-neighbor classification.
+The code relies on base R for matrix operations and uses the
+\strong{Rnanoflann} package for nearest-neighbor classification.
 
-\strong{Note}: For large datasets \eqn{n}, the \eqn{O(n^2)} graph construction may
-be expensive in plain R. You might want to accelerate via Rcpp or other means.
+\strong{Note}: Graph construction is \eqn{O(n^2)} in time and memory, and each
+iteration of \code{dgpage_fit} solves an \eqn{n \times n} linear system
+(\eqn{O(n^3)}). Projection eigenproblems are solved in the numerical row
+space of \code{X}, avoiding redundant feature-null directions when \eqn{d > n}.
 }
 \references{
-\itemize{
-\item Gou, J., Yuan, X., Xue, Y., Du, L., Yu, J., Xia, S., & Zhang, Y. (2022).
-Discriminative and Geometry-Preserving Adaptive Graph Embedding for dimensionality reduction.
-\emph{Information Sciences}.
-}
-}
-\author{
-\itemize{
-\item \strong{Original Paper}: Jianping Gou, Xia Yuan, Ya Xue, Lan Du, Jiali Yu, Shuyin Xia, Yi Zhang
-\item \strong{R Implementation}: Your Name (youremail@domain.com)
-}
+Gou, J., Yuan, X., Xue, Y., Du, L., Yu, J., Xia, S., & Zhang, Y. (2023).
+Discriminative and Geometry-Preserving Adaptive Graph Embedding for
+dimensionality reduction. \emph{Neural Networks}, 157, 364-376.
 }

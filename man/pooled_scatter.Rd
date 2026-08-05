@@ -2,21 +2,22 @@
 % Please edit documentation in R/scatter.R
 \name{pooled_scatter}
 \alias{pooled_scatter}
-\title{Calculate Pooled Scatter (Within-Class Scatter) Matrix}
+\title{Calculate pooled within-class scatter}
 \usage{
 pooled_scatter(X, Y)
 }
 \arguments{
-\item{X}{A numeric matrix (n x d). Rows are samples, columns are features.}
+\item{X}{A numeric matrix with samples in rows and features in columns.}
 
-\item{Y}{A factor or numeric vector of length n representing class labels.}
+\item{Y}{An atomic vector or factor of class labels with length \code{nrow(X)}.}
 }
 \value{
-A numeric (d x d) matrix representing the within-class scatter matrix.
+A numeric feature-by-feature within-class scatter matrix.
 }
 \description{
-Computes the within-class scatter matrix for a dataset with given class labels.
-This uses a trick involving the class means and their counts to produce:
-\deqn{S_w = \sum_i x_i x_i^T - \sum_k n_k M_k M_k^T}
+Computes the unnormalized within-class scatter
+\deqn{S_w = \sum_k \sum_{i \in k}(x_i - \bar{x}_k)(x_i - \bar{x}_k)^T.}
+Class centering is performed explicitly before an optimized cross-product,
+avoiding cancellation from subtracting two large raw-moment matrices.
 }
 \keyword{internal}

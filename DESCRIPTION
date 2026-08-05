@@ -1,31 +1,33 @@
 Package: discursive
-Type: Package
-Title: Graph-Based Discriminant Analysis Methods
-Version: 0.1.0
+Title: Discriminant Analysis and Dimension Reduction Methods
+Version: 0.0.0.9000
 Authors@R:
-    person(given = "First", family = "Last",
+    person(given = c("Bradley", "Russell"),
+           family = "Buchsbaum",
            role = c("aut", "cre"),
-           email = "first.last@example.com",
-           comment = c(ORCID = "YOUR-ORCID-ID"))
-Description: Implements discriminant analysis algorithms including
-    DGPAGE and several orthogonal LDA variants for dimensional
-    reduction and classification. Provides utilities for building
-    similarity and diversity graphs and fast scatter computations via
-    Rcpp.
+           email = "brad.buchsbaum@gmail.com")
+Description: Methods for supervised dimension reduction and discriminant
+    projection, including graph-based, sparse, and trace-ratio based
+    approaches integrated with the multivarious projector framework.
 License: MIT + file LICENSE
+URL: https://github.com/bbuchsbaum/discursive
+BugReports: https://github.com/bbuchsbaum/discursive/issues
 Encoding: UTF-8
-LazyData: false
+LazyData: true
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.2
+RoxygenNote: 7.3.3
 Imports:
+    assertthat,
+    chk,
+    MASS,
+    Matrix,
     multivarious (>= 0.0.0.9000),
-    Rcpp
-Remotes:
-    bbuchsbaum/multivarious
+    Rnanoflann,
+    RSpectra,
+    sda
 Suggests:
+    geigen,
     testthat (>= 3.0.0)
 Config/testthat/edition: 3
 LinkingTo:
     Rcpp
-URL: https://github.com/yourname/discursive
-BugReports: https://github.com/yourname/discursive/issues

@@ -7,11 +7,15 @@
 update_laplacian(S)
 }
 \arguments{
-\item{S}{Similarity matrix (n x n).}
+\item{S}{A numeric similarity matrix (n x n). Note that S might not be symmetric.}
 }
 \value{
-Laplacian matrix L_A (n x n).
+The computed Laplacian matrix L_A (n x n), which will be symmetric.
 }
 \description{
-Compute the Laplacian matrix L_A from the similarity matrix S.
+Computes the graph Laplacian matrix L_A based on the similarity matrix S.
+Uses the formula \code{L_A = D_A - (S + t(S)) / 2}, where D_A is the diagonal
+degree matrix \code{diag(rowSums((S + t(S)) / 2))}. This symmetric form is common
+in spectral methods.
 }
+\keyword{internal}

@@ -7,6 +7,7 @@
 #' @param ... Currently ignored.
 #'
 #' @return The input `x`, invisibly.
+#' @method print discriminant_projector
 #' @export
 print.discriminant_projector <- function(x, ...) {
   cat(sprintf("<discriminant_projector: %s>\n", .projector_method(x)))
@@ -27,6 +28,7 @@ print.discriminant_projector <- function(x, ...) {
 #' @param ... Currently ignored.
 #'
 #' @return An object of class `"summary.discriminant_projector"`.
+#' @method summary discriminant_projector
 #' @export
 summary.discriminant_projector <- function(object, ...) {
   out <- list(
@@ -42,6 +44,13 @@ summary.discriminant_projector <- function(object, ...) {
   out
 }
 
+#' Print a discriminant projector summary
+#'
+#' @param x A `summary.discriminant_projector` object.
+#' @param ... Currently ignored.
+#'
+#' @return The input `x`, invisibly.
+#' @method print summary.discriminant_projector
 #' @export
 print.summary.discriminant_projector <- function(x, ...) {
   cat(sprintf("Discriminant projector summary (%s)\n", x$method))

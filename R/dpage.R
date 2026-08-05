@@ -1,13 +1,6 @@
 #' DGPAGE: Discriminative and Geometry-Preserving Adaptive Graph Embedding
 #'
-#' This package-like script provides a complete, *faithful*, *working out-of-the-box* R implementation
-#' of the **DGPAGE** method described in:
-#'
-#' > **J. Gou, X. Yuan, Y. Xue, L. Du, J. Yu, S. Xia, Y. Zhang**.  
-#' > "Discriminative and Geometry-Preserving Adaptive Graph Embedding for dimensionality reduction."  
-#' > *Information Sciences*, 2022.
-#'
-#' **DGPAGE** systematically integrates:
+#' An R implementation of the **DGPAGE** method. DGPAGE systematically integrates:
 #' 1. Manually constructed *similarity* and *diversity* graphs (see Eqs. (4) and (7) in the paper),
 #' 2. An adaptively learned adjacency graph with diversity-based regularization (Eqs. (8)-(11)),
 #' 3. A multi-task-like objective that jointly optimizes the adjacency matrix and the projection matrix
@@ -17,41 +10,124 @@
 #' The main user-facing functions are:
 #' \itemize{
 #'   \item \code{dgpage_fit()}: fits the DGPAGE model on training data,
-#'   \item \code{dgpage_predict()}: obtains predictions (via 1-NN) on new test data,
+#'   \item \code{dgpage_predict()}: obtains predictions (via k-NN) on new test data,
 #'   \item \code{compute_similarity_graph()}: constructs the manual similarity graph \eqn{G_S} (Eq. (4)),
 #'   \item \code{compute_diversity_graph()}: constructs the manual diversity graph \eqn{G_D} (Eq. (7)).
 #' }
 #'
-#' The code below relies on base R (for matrix operations) and uses the
-#' \strong{Rnanoflann} package for 1-nearest-neighbor classification.
-#' 
-#' **Note**: For large datasets \eqn{n}, the \eqn{O(n^2)} graph construction may
-#' be expensive in plain R. You might want to accelerate via Rcpp or other means.
+#' The code relies on base R for matrix operations and uses the
+#' \strong{Rnanoflann} package for nearest-neighbor classification.
+#'
+#' **Note**: Graph construction is \eqn{O(n^2)} in time and memory, and each
+#' iteration of \code{dgpage_fit} solves an \eqn{n \times n} linear system
+#' (\eqn{O(n^3)}). Projection eigenproblems are solved in the numerical row
+#' space of \code{X}, avoiding redundant feature-null directions when \eqn{d > n}.
 #'
 #' @importFrom Rnanoflann nn
-#' @author
-#' \itemize{
-#'   \item \strong{Original Paper}: Jianping Gou, Xia Yuan, Ya Xue, Lan Du, Jiali Yu, Shuyin Xia, Yi Zhang
-#'   \item \strong{R Implementation}: Your Name (youremail@domain.com)
-#' }
 #' @references
-#' \itemize{
-#'   \item Gou, J., Yuan, X., Xue, Y., Du, L., Yu, J., Xia, S., & Zhang, Y. (2022).
-#'     Discriminative and Geometry-Preserving Adaptive Graph Embedding for dimensionality reduction.
-#'     \emph{Information Sciences}.
-#' }
+#' Gou, J., Yuan, X., Xue, Y., Du, L., Yu, J., Xia, S., & Zhang, Y. (2023).
+#' Discriminative and Geometry-Preserving Adaptive Graph Embedding for
+#' dimensionality reduction. \emph{Neural Networks}, 157, 364-376.
 #' @name DGPAGE
 NULL
 
 
 # -------------------------------------------------------------------
-#  dp_ge_projector.R -- DGPAGE as a discriminant_projector extension
+#  Internal helpers
+# -------------------------------------------------------------------
+
+.dgpage_is_finite_scalar <- function(x) {
+  is.numeric(x) && length(x) == 1L && !is.na(x) && is.finite(x)
+}
+
+.dgpage_is_positive_integer <- function(x) {
+  .dgpage_is_finite_scalar(x) && x >= 1 && x == round(x)
+}
+
+# Validate labels for graph construction: at least two classes, and every
+# class needs >= 2 members (a singleton class makes tau_plus/rho_plus zero,
+# silently zeroing that sample's intra-class similarities).
+.validate_dgpage_labels <- function(y, n) {
+  assertthat::assert_that(length(y) == n, msg = "Length of y must match nrow(X).")
+  assertthat::assert_that(!anyNA(y), msg = "y must not contain missing values.")
+  y <- droplevels(as.factor(y))
+  counts <- table(y)
+  assertthat::assert_that(length(counts) >= 2, msg = "y must contain at least two classes.")
+  assertthat::assert_that(min(counts) >= 2, msg = "Every class must contain at least two samples.")
+  y
+}
+
+# Generalized (two-sided) Laplacian-like matrix for a possibly asymmetric W:
+#   G = diag(rowSums(W) + colSums(W)) - W - t(W)
+# satisfies sum_ij w_ij ||y_i - y_j||^2 = tr(Y G Y^T) for Y with samples as columns.
+# For symmetric W this equals twice the usual Laplacian.
+.pairwise_laplacian <- function(W) {
+  n <- nrow(W)
+  G <- -(W + t(W))
+  diag(G) <- diag(G) + rowSums(W) + colSums(W)
+  G
+}
+
+# Majority vote over a m x k matrix of training-set neighbor indices.
+# Ties are broken by factor level order.
+.knn_vote <- function(labs, idx_mat) {
+  labs <- as.factor(labs)
+  idx_mat <- as.matrix(idx_mat)
+  if (ncol(idx_mat) == 1L) {
+    return(labs[idx_mat[, 1L]])
+  }
+  votes <- apply(idx_mat, 1L, function(row_i) {
+    tab <- table(labs[row_i])
+    names(tab)[which.max(tab)]
+  })
+  factor(votes, levels = levels(labs))
+}
+
+
+.validate_knn_k <- function(k, n) {
+  assertthat::assert_that(
+    .dgpage_is_positive_integer(k) && k <= n,
+    msg = paste0("k must be a positive integer no larger than the number of training samples (", n, ").")
+  )
+  as.integer(k)
+}
+
+
+# Pairwise distance ratios are invariant to translation and global scale. Work
+# in a normalized difference space to avoid underflow/overflow before squaring.
+.dgpage_squared_distances <- function(X) {
+  n <- nrow(X)
+  data_scale <- max(abs(X))
+  if (data_scale == 0) {
+    return(matrix(0, n, n))
+  }
+
+  X_unit <- X / data_scale
+  X_difference <- sweep(X_unit, 2L, X_unit[1L, ], FUN = "-")
+  difference_scale <- max(abs(X_difference))
+  if (difference_scale == 0) {
+    return(matrix(0, n, n))
+  }
+
+  unname(as.matrix(dist(X_difference / difference_scale, method = "euclidean")))^2
+}
+
+
+.dgpage_safe_row_ratio <- function(numerator, denominator) {
+  denominator_safe <- denominator
+  denominator_safe[denominator_safe == 0] <- 1
+  numerator / denominator_safe
+}
+
+
+# -------------------------------------------------------------------
+#  DGPAGE as a discriminant_projector extension
 # -------------------------------------------------------------------
 
 #' Fit DGPAGE and return a discriminant_projector
 #'
 #' This function wraps \code{\link{dgpage_fit}} but returns a \code{discriminant_projector}
-#' (subclass \code{"dgpage_discriminant"}) so that you can use the same \code{predict}
+#' (subclass \code{"dgpage_projector"}) so that you can use the same \code{predict}
 #' interface as for other discriminant methods.
 #'
 #' **Algorithm**:
@@ -70,22 +146,19 @@ NULL
 #'       We store \code{W} and other metadata in the returned object.
 #' }
 #'
-#' **NOTE**: The \code{dgpage_predict} for 1-NN classification can now be replaced by
-#' a new S3 \code{predict} method that lives under \code{dgpage_discriminant}.
-#'
 #' @param X A numeric matrix of size n x d (training samples).
 #' @param y A factor (or coercible to factor) of length n (class labels).
-#' @param ncomp The target dimension (number of discriminant directions).
 #' @param S The n x n similarity graph. If \code{NULL}, we compute it from \code{X,y}.
 #' @param D The n x n diversity graph. If \code{NULL}, we compute it from \code{X,y}.
-#' @param alpha,beta Hyperparameters in Eq. (12).
-#' @param maxiter,tol,verbose Passed to \code{\link{dgpage_fit}}.
+#' @param r The target dimension (number of discriminant directions).
+#' @param alpha,beta Hyperparameters in Eq. (12). \code{alpha} must be positive,
+#'   \code{beta} must be non-negative, and \code{alpha + beta < 1}.
+#' @param maxiter,tol,verbose,seed,ridge,rank_tol Passed to
+#'   \code{\link{dgpage_fit}}.
 #' @param q If \code{S} or \code{D} is \code{NULL}, we use \code{q} in
 #'   \code{\link{compute_similarity_graph}}. Default 1.5.
-#' @param seed Optional seed passed to \code{dgpage_fit} for reproducible
-#'   initialization.
 #'
-#' @return An object of class \code{c("dgpage_discriminant","discriminant_projector","bi_projector",...)}
+#' @return An object of class \code{c("dgpage_projector","discriminant_projector","bi_projector",...)}
 #'   containing:
 #'   \itemize{
 #'     \item \code{v}        : the d x r loadings
@@ -94,6 +167,13 @@ NULL
 #'     \item \code{labels}   : the training labels
 #'     \item \code{W}        : the learned n x n adjacency graph
 #'     \item \code{objective}: final objective value
+#'     \item \code{obj_trace}: objective value after each iteration
+#'     \item \code{converged}: whether the relative objective change was below \code{tol}
+#'     \item \code{final_rel_change}: final relative objective change
+#'     \item \code{optimization_rank}: numerical row-space rank used by the solver
+#'     \item \code{requested_r,effective_r}: requested and fitted dimensions
+#'     \item \code{ridge,ridge_effective}: requested multiplier and normalized
+#'       row-space ridge
 #'     \item \code{alpha,beta} : stored hyperparameters
 #'   }
 #'
@@ -101,7 +181,7 @@ NULL
 #' \dontrun{
 #'   X <- matrix(rnorm(100*5), 100, 5)
 #'   y <- factor(rep(1:2, each=50))
-#'   dp <- dgpage_discriminant(X, y, ncomp = 2)
+#'   dp <- dgpage_discriminant(X, y, r=2)
 #'   preds_class  <- predict(dp, new_data=X, method="lda", type="class")
 #'   preds_1nn    <- predict(dp, new_data=X, method="1nn")
 #'   mean(preds_class == y)
@@ -109,80 +189,112 @@ NULL
 #' }
 #' @export
 dgpage_discriminant <- function(X, y,
-                                ncomp   = 2,
-                                S       = NULL,
-                                D       = NULL,
-                                alpha   = 1e-3,
-                                beta    = 1e-5,
-                                maxiter = 20,
-                                tol     = 1e-5,
-                                verbose = TRUE,
-                                q       = 1.5,
-                                seed    = NULL)
+                                S      = NULL,
+                                D      = NULL,
+                                r      = 2,
+                                alpha  = 1e-3,
+                                beta   = 1e-5,
+                                maxiter= 20,
+                                tol    = 1e-5,
+                                verbose= FALSE,
+                                seed   = NULL,
+                                q      = 1.5,
+                                ridge  = 1e-8,
+                                rank_tol = NULL)
 {
-  cl <- match.call()
+  X <- as.matrix(X)
   y <- as.factor(y)
   n <- nrow(X)
-  d <- ncol(X)
   if (length(y) != n) {
     stop("Length of y must match nrow(X).")
   }
+  assertthat::assert_that(!anyNA(y), msg = "y must not contain missing values.")
+  assertthat::assert_that(nlevels(droplevels(y)) >= 2L,
+                          msg = "y must contain at least two classes.")
 
-  if (is.null(S)) S <- compute_similarity_graph(X, y, q = q)
-  if (is.null(D)) D <- compute_diversity_graph(X, y)
+  # Possibly build S, D:
+  if (is.null(S)) {
+    S <- compute_similarity_graph(X, y, q=q)
+  }
+  if (is.null(D)) {
+    D <- compute_diversity_graph(X, y)
+  }
 
-  fitres <- dgpage_fit(X, S = S, D = D, r = ncomp,
-                       alpha = alpha, beta = beta,
-                       maxiter = maxiter, tol = tol,
-                       verbose = verbose, seed = seed)
+  # Fit DGPAGE:
+  fitres <- dgpage_fit(X, S=S, D=D, r=r,
+                       alpha=alpha, beta=beta,
+                       maxiter=maxiter, tol=tol,
+                       verbose=verbose, seed=seed,
+                       ridge=ridge, rank_tol=rank_tol)
 
-  s_mat    <- X %*% fitres$P
+  # Build training scores: s = X %*% P
+  # fitres$P is d x r
+  s_mat <- X %*% fitres$P  # shape (n x r)
+  # sdev => stdev of each column
   sdev_vec <- apply(s_mat, 2, sd)
 
+  # Create a discriminant_projector object with an extra class "dgpage_projector"
   dp <- multivarious::discriminant_projector(
-    v       = fitres$P,
-    s       = s_mat,
-    sdev    = sdev_vec,
-    labels  = y,
-    method  = "dgpage_discriminant",
-    call    = cl,
-    classes = "dgpage_discriminant"
+    v       = fitres$P,     # loadings
+    s       = s_mat,        # training scores
+    sdev    = sdev_vec,     # stdev
+    preproc = multivarious::fit(multivarious::pass(), X),
+    labels  = y,            # the training labels
+    classes = "dgpage_projector"
   )
 
+  # Store additional fields from the fit:
   dp$W         <- fitres$W
   dp$objective <- fitres$objective
+  dp$obj_trace <- fitres$obj_trace
   dp$alpha     <- alpha
   dp$beta      <- beta
   dp$iter      <- fitres$iter
+  dp$converged <- fitres$converged
+  dp$final_rel_change <- fitres$final_rel_change
+  dp$initial_objective <- fitres$initial_objective
+  dp$ridge <- fitres$ridge
+  dp$ridge_effective <- fitres$ridge_effective
+  dp$rank_tol <- fitres$rank_tol
+  dp$optimization_rank <- fitres$optimization_rank
+  dp$requested_r <- fitres$requested_r
+  dp$effective_r <- fitres$effective_r
+  dp$data_scale <- fitres$data_scale
+
+  # Stored for debugging / prediction:
   dp$S <- S
   dp$D <- D
   dp$Z <- fitres$Z
 
+  # Return it
   dp
 }
 
 # -------------------------------------------------------------------
-#  Predict method for "dgpage_discriminant"
+#  Predict method for "dgpage_projector"
 # -------------------------------------------------------------------
 
-#' Predict method for a \code{dgpage_discriminant} object
+#' Predict method for a \code{dgpage_projector} object
 #'
 #' Extends the discriminant methods with a \code{method="1nn"} option that
-#' uses \pkg{Rnanoflann} for 1-nearest-neighbor classification in the projected space.
+#' uses \pkg{Rnanoflann} for k-nearest-neighbor classification in the projected space.
 #'
 #' Otherwise, if \code{method} is \code{"lda"} or \code{"euclid"}, we fall back to the
-#' standard \code{\link{predict.discriminant_projector}} method for linear discriminant
+#' standard \code{multivarious::predict.discriminant_projector()} method for linear discriminant
 #' or Euclidean nearest-mean classification in subspace.
 #'
-#' @param object A \code{dgpage_discriminant} object.
+#' @param object A \code{dgpage_projector} object.
 #' @param new_data A numeric matrix (m x d).
 #' @param method One of \code{c("1nn","lda","euclid")}. Default \code{"1nn"}.
-#' @param type If \code{method="1nn"}, we only return \code{"class"}. 
+#' @param type If \code{method="1nn"}, only \code{"class"} is supported and
+#'   other values produce an error.
 #'   If \code{method \%in\% c("lda","euclid")}, we can do \code{"class"} or \code{"prob"}.
-#' @param k Number of neighbors if using \code{method="1nn"}. Default 1 (which is actually 1NN).
+#' @param k Number of neighbors if using \code{method="1nn"}. Default 1. For
+#'   \code{k > 1} a majority vote over the k nearest training samples is taken,
+#'   with ties broken by factor level order.
 #' @param ... Not used (or pass \code{method="lda"} / \code{type="prob"}).
 #'
-#' @return 
+#' @return
 #' If \code{method="1nn"}, a factor vector of length \code{m}.
 #' If \code{method} is \code{"lda"} or \code{"euclid"} and \code{type="class"},
 #' a factor of length \code{m}.
@@ -190,77 +302,55 @@ dgpage_discriminant <- function(X, y,
 #' \code{m x nclass} matrix of posterior-like values.
 #'
 #' @importFrom Rnanoflann nn
-#' @seealso \code{\link{predict.discriminant_projector}}
+#' @seealso \code{multivarious::predict.discriminant_projector()}
 #' @export
-#' @import Rnanoflann
-#' @importFrom multivarious predict.discriminant_projector
-predict.dgpage_discriminant <- function(object,
+predict.dgpage_projector <- function(object,
                                      new_data,
                                      method = c("1nn","lda","euclid"),
                                      type   = c("class","prob"),
                                      k      = 1,
                                      ...) {
   method <- match.arg(method)
- 
+  type <- match.arg(type)
+
   if (method %in% c("lda","euclid")) {
     # Let the base 'predict.discriminant_projector' do the job.
-    # We do need to set the 'type' properly:
-    type <- match.arg(type)
-   
-     return(multivarious:::predict.discriminant_projector(object,
-                                    new_data = new_data,
-                                    method   = method,
-                                    type     = type,
-                                    ...))
-    
+    object_base <- object
+    class(object_base) <- setdiff(class(object_base), "dgpage_projector")
+    return(predict(object_base,
+                   new_data = new_data,
+                   method = method,
+                   type = type,
+                   ...))
   }
-  
-  # If method="1nn", then we do the standard Rnanoflann approach
-  # similar to the old 'dgpage_predict' code, but integrated in S3 style:
-  if (method == "1nn") {
-    # type is forced to "class" basically:
-    # We'll ignore user input if type="prob" (not supported for 1NN here).
-    # So let's do a direct approach:
-    
-    # 1) Project new_data into subspace => new_data_proj
-    new_data_proj <- new_data %*% object$v  # shape (m x r)
-    
-    # 2) Gather training scores and labels from object
-    train_scores <- object$s      # shape (n x r)
-    labs         <- object$labels # factor of length n
-    
-    # 3) Use Rnanoflann:
-    #   data  = train_scores, points= new_data_proj,
-    #   distance method = "euclidean" by default, can param. 
-    #   BUT we must note that Rnanoflann expects row=points, col=features => that's consistent.
-    res <- nn(data   = train_scores,
-              points = new_data_proj,
-              k      = k,
-              trans=FALSE,
-              method = "euclidean")
-    
-    # res$indices is k x m if trans=TRUE (default). We'll transpose to get m x k
-    idx_mat <- t(res$indices)  # shape (m x k)
-    
-    # If k=1 => a single neighbor
-    if (k == 1) {
-      preds <- labs[idx_mat[,1]]
-      return(preds)
-    } else {
-      # majority vote or something. Let's do majority in a naive way:
-      # For each row in idx_mat, pick the most common class
-      preds <- apply(idx_mat, 1, function(row_i) {
-        tab <- table(labs[row_i])
-        cl  <- names(which.max(tab))
-        cl
-      })
-      preds <- factor(preds, levels=levels(labs))
-      return(preds)
-    }
+
+  if (type != "class") {
+    stop("method = \"1nn\" supports only type = \"class\".", call. = FALSE)
   }
+
+  # method="1nn": k-NN in the projected space via Rnanoflann.
+  # 1) Project new_data into subspace => new_data_proj (m x r)
+  new_data <- as.matrix(new_data)
+  assertthat::assert_that(is.numeric(new_data), msg = "new_data must be numeric.")
+  assertthat::assert_that(all(is.finite(new_data)), msg = "new_data must contain only finite values.")
+  assertthat::assert_that(ncol(new_data) == nrow(object$v),
+                          msg = "new_data must have the same number of columns as the training data.")
+  assertthat::assert_that(length(object$labels) == nrow(object$s),
+                          msg = "Length of labels must match the number of training scores.")
+  k <- .validate_knn_k(k, nrow(object$s))
+  new_data_processed <- multivarious::transform(object$preproc, new_data)
+  new_data_proj <- new_data_processed %*% object$v
+
+  # 2) Nearest neighbors among the training scores.
+  #    trans = TRUE returns indices as an m x k matrix (verified empirically).
+  res <- nn(data   = object$s,
+            points = new_data_proj,
+            k      = k,
+            method = "euclidean",
+            trans  = TRUE)
+
+  .knn_vote(object$labels, res$indices)
 }
-
-
 
 
 # -------------------------------------------------------------------------
@@ -282,39 +372,46 @@ predict.dgpage_discriminant <- function(object,
 #' geometric distributions for sample \eqn{x_i}, respectively.
 #'
 #' @param X A numeric matrix of size \eqn{n \times d}, where each of the \eqn{n} rows is one sample.
-#' @param y A length-\eqn{n} vector/factor of class labels.
-#' @param q A positive exponent (see Eqs. (5) and (6)). Typical range is [1, 3].
+#' @param y A length-\eqn{n} vector/factor of class labels. Each class must have
+#'   at least two members.
+#' @param q A positive exponent (see Eqs. (5) and (6)). Typical values are between 1 and 3.
 #'
 #' @return An \eqn{n \times n} matrix \eqn{S}.
-#' @details This implementation constructs the full pairwise matrix and
-#'   therefore has \eqn{O(n^2)} memory and time complexity.
-#'   Consider a more efficient approach for very large \eqn{n}.
 #' @export
 compute_similarity_graph <- function(X, y, q = 1.5) {
+  X <- as.matrix(X)
+  assertthat::assert_that(is.numeric(X), msg = "X must be numeric.")
+  assertthat::assert_that(all(is.finite(X)), msg = "X must contain only finite values.")
+  assertthat::assert_that(nrow(X) >= 2L && ncol(X) >= 1L,
+                          msg = "X must have at least two rows and one column.")
+  assertthat::assert_that(.dgpage_is_finite_scalar(q) && q > 0,
+                          msg = "q must be a positive finite number.")
   n <- nrow(X)
+  y <- .validate_dgpage_labels(y, n)
 
-  # Precompute squared pairwise distances (n x n)
-  distMat <- as.matrix(dist(X, method = "euclidean"))^2
+  distMat <- .dgpage_squared_distances(X)
 
-  # Indicator matrices for class memberships
-  same  <- outer(y, y, "==")
-  diff  <- !same
+  # Class-match indicator and per-sample intra/inter counts
+  same <- outer(as.integer(y), as.integer(y), "==")
+  n_plus <- tabulate(y)[as.integer(y)]
+  n_minus <- n - n_plus
 
-  n_plus  <- rowSums(same)
-  n_minus <- rowSums(diff)
+  # tau_i^+ = (1 / n^+(c_i)^q) * sum_{l: same class} d_il^2  (self included, d_ii = 0)
+  # tau_i^- = (1 / n^-(c_i)^q) * sum_{l: other class} d_il^2
+  s_plus <- rowSums(distMat * same)
+  s_minus <- rowSums(distMat * (!same))
+  tau_plus <- s_plus / n_plus^q
+  tau_minus <- s_minus / n_minus^q
 
-  tau_plus  <- rowSums(distMat * same)  / (n_plus^q)
-  tau_minus <- rowSums(distMat * diff)  / (n_minus^q)
+  # E_plus[i, j] = exp(-d_ij^2 / tau_i^+): `distMat / tau` recycles tau down
+  # columns, i.e. divides row i by tau[i]. Fill only the entries each graph
+  # branch uses, avoiding irrelevant overflow/underflow in degenerate cases.
+  E_plus <- matrix(0, nrow = n, ncol = n)
+  E_minus <- matrix(0, nrow = n, ncol = n)
+  E_plus[same] <- exp(-.dgpage_safe_row_ratio(distMat, tau_plus)[same])
+  E_minus[!same] <- exp(-.dgpage_safe_row_ratio(distMat, tau_minus)[!same])
 
-  Tau_plus_row  <- matrix(tau_plus,  n, n, byrow = FALSE)
-  Tau_plus_col  <- matrix(tau_plus,  n, n, byrow = TRUE)
-  Tau_minus_row <- matrix(tau_minus, n, n, byrow = FALSE)
-  Tau_minus_col <- matrix(tau_minus, n, n, byrow = TRUE)
-
-  S_same <-  0.5 * (exp(-distMat / Tau_plus_row)  + exp(-distMat / Tau_plus_col))
-  S_diff <- -0.5 * (exp(-distMat / Tau_minus_row) + exp(-distMat / Tau_minus_col))
-
-  S <- ifelse(same, S_same, S_diff)
+  S <- 0.5 * (E_plus + t(E_plus)) * same - 0.5 * (E_minus + t(E_minus)) * (!same)
   diag(S) <- 0
   S
 }
@@ -334,33 +431,113 @@ compute_similarity_graph <- function(X, y, q = 1.5) {
 #' where \eqn{\rho_i^+} and \eqn{\rho_i^-} follow Eqs. (5) and (6) **but** with \eqn{q=0}.
 #'
 #' @param X A numeric matrix of size \eqn{n \times d}.
-#' @param y A length-\eqn{n} vector/factor of class labels.
+#' @param y A length-\eqn{n} vector/factor of class labels. Each class must have
+#'   at least two members.
 #'
 #' @return An \eqn{n \times n} matrix \eqn{D}.
-#' @details The computation forms all pairwise distances and therefore
-#'   scales quadratically with the number of samples.
 #' @export
 compute_diversity_graph <- function(X, y) {
+  X <- as.matrix(X)
+  assertthat::assert_that(is.numeric(X), msg = "X must be numeric.")
+  assertthat::assert_that(all(is.finite(X)), msg = "X must contain only finite values.")
+  assertthat::assert_that(nrow(X) >= 2L && ncol(X) >= 1L,
+                          msg = "X must have at least two rows and one column.")
   n <- nrow(X)
-  distMat <- as.matrix(dist(X, method = "euclidean"))^2  # squared distances
-  
-  # rho_i^+, rho_i^- ~ same as tau_i^+, tau_i^- but q=0
-  # => effectively the average is replaced by total sum (since n^0 = 1).
-  
-  rho_plus  <- rowSums(distMat * same)
-  rho_minus <- rowSums(distMat * diff)
+  y <- .validate_dgpage_labels(y, n)
 
-  R_plus_row  <- matrix(rho_plus,  n, n, byrow = FALSE)
-  R_plus_col  <- matrix(rho_plus,  n, n, byrow = TRUE)
-  R_minus_row <- matrix(rho_minus, n, n, byrow = FALSE)
-  R_minus_col <- matrix(rho_minus, n, n, byrow = TRUE)
+  distMat <- .dgpage_squared_distances(X)
 
-  D_same <- 0.5 * (exp(distMat / R_plus_row) + exp(distMat / R_plus_col))
-  D_diff <- 0.5 * (exp(distMat / R_minus_row) + exp(distMat / R_minus_col))
+  same <- outer(as.integer(y), as.integer(y), "==")
 
-  D <- ifelse(same, D_same, D_diff)
+  # rho_i^+, rho_i^- ~ same as tau_i^+, tau_i^- but q=0, i.e. plain sums
+  rho_plus <- rowSums(distMat * same)
+  rho_minus <- rowSums(distMat * (!same))
+
+  # Note the positive exponent (diversity grows with distance). Fill only the
+  # entries each graph branch uses; otherwise zero-distance classes can create
+  # Inf * 0 = NaN for irrelevant masked entries.
+  E_plus <- matrix(0, nrow = n, ncol = n)
+  E_minus <- matrix(0, nrow = n, ncol = n)
+  E_plus[same] <- exp(.dgpage_safe_row_ratio(distMat, rho_plus)[same])
+  E_minus[!same] <- exp(.dgpage_safe_row_ratio(distMat, rho_minus)[!same])
+
+  D <- 0.5 * (E_plus + t(E_plus)) * same + 0.5 * (E_minus + t(E_minus)) * (!same)
   diag(D) <- 0
   D
+}
+
+
+.prepare_dgpage_row_space <- function(X, rank_tol = NULL) {
+  data_scale <- max(abs(X))
+  assertthat::assert_that(
+    is.finite(data_scale) && data_scale > 0,
+    msg = "X must contain non-zero variation."
+  )
+
+  X_scaled <- X / data_scale
+  sv <- svd(X_scaled, nu = 0L, nv = min(dim(X_scaled)))
+  relative_rank_tol <- if (is.null(rank_tol)) {
+    max(dim(X_scaled)) * .Machine$double.eps
+  } else {
+    assertthat::assert_that(
+      .dgpage_is_finite_scalar(rank_tol) && rank_tol >= 0 && rank_tol < 1,
+      msg = "rank_tol must be NULL or a finite numeric scalar in [0, 1)."
+    )
+    rank_tol
+  }
+  threshold <- relative_rank_tol * max(sv$d)
+  optimization_rank <- sum(sv$d > threshold)
+  assertthat::assert_that(
+    optimization_rank >= 1L,
+    msg = "X has numerical rank zero at the requested rank tolerance."
+  )
+
+  basis <- sv$v[, seq_len(optimization_rank), drop = FALSE]
+  X_reduced <- X_scaled %*% basis
+  list(
+    data_scale = data_scale,
+    basis = basis,
+    X_reduced = X_reduced,
+    singular_values = sv$d[seq_len(optimization_rank)],
+    optimization_rank = optimization_rank,
+    rank_threshold = threshold,
+    relative_rank_tol = relative_rank_tol
+  )
+}
+
+
+.update_dgpage_W <- function(Y, DtD, alpha, beta) {
+  YtY <- crossprod(Y)
+  col_norms <- colSums(Y^2)
+  E <- outer(col_norms, col_norms, "+") - 2 * YtY
+  H <- YtY + alpha * DtD
+  H <- 0.5 * (H + t(H))
+  chol_H <- tryCatch(chol(H), error = function(e) NULL)
+  if (is.null(chol_H)) {
+    stop(
+      "The W subproblem is not positive definite. Increase alpha or supply a diversity graph D with sufficient rank.",
+      call. = FALSE
+    )
+  }
+
+  rhs <- YtY - (beta / 2) * E
+  backsolve(chol_H, forwardsolve(t(chol_H), rhs))
+}
+
+
+.update_dgpage_P <- function(W, Z, N_inv_half, G_S, alpha, beta, r, I_n) {
+  G_W <- .pairwise_laplacian(W)
+  K <- tcrossprod(I_n - W)
+  A <- K + beta * G_W + (1 - alpha - beta) * G_S
+  ZA <- Z %*% A
+  M <- tcrossprod(ZA, Z)
+  M <- 0.5 * (M + t(M))
+
+  whitened <- crossprod(N_inv_half, M %*% N_inv_half)
+  whitened <- 0.5 * (whitened + t(whitened))
+  eig <- eigen(whitened, symmetric = TRUE)
+  selected <- order(eig$values)[seq_len(r)]
+  N_inv_half %*% eig$vectors[, selected, drop = FALSE]
 }
 
 
@@ -375,13 +552,23 @@ compute_diversity_graph <- function(X, y) {
 #' Eq. (12) in an alternating fashion.
 #'
 #' **Steps**:
-#' 1. Initialize \eqn{P} randomly (size \eqn{d \times r}).
+#' 1. Compute the numerical row space of \code{X} and initialize \eqn{P}
+#'    randomly under the generalized orthonormality constraint.
 #' 2. For each iteration:
 #'    \itemize{
 #'      \item Update \eqn{W} via Eq. (18) (closed-form).
 #'      \item Update \eqn{P} by solving the generalized eigenvalue problem in Eq. (23).
 #'    }
 #' 3. Repeat until convergence or \code{maxiter} is reached.
+#'
+#' Both alternating steps minimize the same objective
+#' \deqn{
+#'   F(P, W) = \|P^\top Z - P^\top Z W\|_F^2 + \alpha \|D W\|_F^2
+#'           + \beta \sum_{ij} w_{ij} \|P^\top z_i - P^\top z_j\|^2
+#'           + (1-\alpha-\beta) \sum_{ij} s_{ij} \|P^\top z_i - P^\top z_j\|^2,
+#' }
+#' so the objective is non-increasing across iterations (after the first
+#' P-update); this is checked by the unit tests.
 #'
 #' **Dimensions** (in internal notation):
 #' \itemize{
@@ -392,310 +579,284 @@ compute_diversity_graph <- function(X, y) {
 #'   \item \eqn{S}, \eqn{D} are \eqn{n x n}.
 #' }
 #'
-#' @param X A numeric matrix of size \eqn{n \times d} (training data).  
+#' @param X A numeric matrix of size \eqn{n \times d} (training data).
 #'          \strong{Note}: We internally transpose \code{X} to follow the paper's notation.
 #' @param S The \eqn{n x n} similarity graph (from \code{\link{compute_similarity_graph}}).
 #' @param D The \eqn{n x n} diversity graph (from \code{\link{compute_diversity_graph}}).
 #' @param r Target dimension (number of embedding directions to learn).
-#' @param alpha The hyper-parameter in Eq. (12). Typical range: \eqn{[1e-6, 1e-1]}.
+#' @param alpha A strictly positive hyper-parameter in Eq. (12). Typical range:
+#'   \eqn{[1e-6, 1e-1]}. Strict positivity, together with a sufficiently ranked
+#'   diversity graph, makes the adaptive-graph subproblem bounded.
 #' @param beta The hyper-parameter in Eq. (12). Typical range: \eqn{[1e-6, 1e-1]}.
-#' @param maxiter Maximum number of iterations for the alternating updates.
-#' @param tol Convergence tolerance on the objective value.
-#' @param verbose Whether to print progress information.
-#' @param seed Optional integer seed controlling the random initialization.
+#'   \code{beta} must be non-negative and \code{alpha + beta < 1}.
+#' @param maxiter Maximum number of iterations for the alternating updates (>= 1).
+#' @param tol Convergence tolerance on the relative change of the objective value.
+#' @param verbose Whether to print progress information (via \code{message}).
+#' @param seed Optional integer seed for the random initialization of \eqn{P}.
+#'   When supplied, the caller's RNG state is saved and restored, so the global
+#'   random stream is unaffected. When \code{NULL} (default), the current RNG
+#'   stream is used (and advanced) as usual.
+#' @param ridge Relative ridge added to the row-space total-scatter matrix before
+#'   the generalized eigen-solve, as \code{ridge * mean(diag(N))}. Default
+#'   \code{1e-8}. No absolute ridge is added, preserving unit equivariance.
+#' @param rank_tol Optional relative singular-value threshold used to determine
+#'   the numerical row-space rank of \code{X}. The default is
+#'   \code{max(dim(X)) * .Machine$double.eps}.
 #'
 #' @return A list with:
 #' \itemize{
-#'   \item \code{P}: the \eqn{d \times r} projection matrix,
+#'   \item \code{P}: the \eqn{d \times effective_r} projection matrix mapped
+#'         back from the numerical row space,
 #'   \item \code{W}: the \eqn{n \times n} learned adjacency matrix (adaptive graph),
 #'   \item \code{objective}: the final objective value,
+#'   \item \code{obj_trace}: the objective value after each iteration,
 #'   \item \code{iter}: number of iterations taken,
-#'   \item \code{Z}: stored internally (\eqn{d x n}) = \code{t(X)} (just for reference).
+#'   \item \code{converged}: whether the relative objective change fell below \code{tol},
+#'   \item \code{final_rel_change}: relative change at the last iteration,
+#'   \item \code{requested_r}, \code{effective_r}, and \code{optimization_rank}:
+#'         dimension/rank diagnostics,
+#'   \item \code{ridge} and \code{ridge_effective}: the requested multiplier and
+#'         effective ridge in normalized row-space coordinates,
+#'   \item \code{Z}: original training data as \code{t(X)}, retained for prediction.
 #' }
 #' @export
 dgpage_fit <- function(X, S, D, r = 10,
                        alpha = 1e-3, beta = 1e-5,
                        maxiter = 20, tol = 1e-5,
-                       verbose = TRUE, seed = NULL) {
-  # Transpose X: let Z = d x n
-  Z <- t(X)
-  d <- nrow(Z)
-  n <- ncol(Z)
-  
-  if (r > d) {
-    warning("r > d. Embedding dimension cannot exceed the number of features. Setting r = d.")
-    r <- d
+                       verbose = FALSE, seed = NULL,
+                       ridge = 1e-8, rank_tol = NULL) {
+  X <- as.matrix(X)
+  assertthat::assert_that(is.numeric(X), msg = "X must be numeric.")
+  assertthat::assert_that(all(is.finite(X)), msg = "X must contain only finite values.")
+  assertthat::assert_that(nrow(X) >= 2L && ncol(X) >= 1L,
+                          msg = "X must have at least two rows and one column.")
+  n <- nrow(X)
+
+  assertthat::assert_that(is.matrix(S) && is.numeric(S) && all(dim(S) == c(n, n)),
+                          msg = "S must be an n x n matrix with numeric entries.")
+  assertthat::assert_that(is.matrix(D) && is.numeric(D) && all(dim(D) == c(n, n)),
+                          msg = "D must be an n x n matrix with numeric entries.")
+  assertthat::assert_that(all(is.finite(S)), msg = "S must contain only finite values.")
+  assertthat::assert_that(all(is.finite(D)), msg = "D must contain only finite values.")
+  assertthat::assert_that(.dgpage_is_positive_integer(r),
+                          msg = "r must be a finite positive integer.")
+  assertthat::assert_that(.dgpage_is_finite_scalar(alpha) && alpha > 0,
+                          msg = "alpha must be a finite positive numeric scalar.")
+  assertthat::assert_that(.dgpage_is_finite_scalar(beta) && beta >= 0,
+                          msg = "beta must be a finite non-negative numeric scalar.")
+  assertthat::assert_that(alpha + beta < 1,
+                          msg = "alpha and beta must satisfy alpha + beta < 1.")
+  assertthat::assert_that(.dgpage_is_positive_integer(maxiter),
+                          msg = "maxiter must be a finite positive integer.")
+  assertthat::assert_that(.dgpage_is_finite_scalar(tol) && tol > 0,
+                          msg = "tol must be a finite positive numeric scalar.")
+  assertthat::assert_that(.dgpage_is_finite_scalar(ridge) && ridge >= 0,
+                          msg = "ridge must be a finite non-negative numeric scalar.")
+  assertthat::assert_that(is.logical(verbose) && length(verbose) == 1L && !is.na(verbose),
+                          msg = "verbose must be TRUE or FALSE.")
+  assertthat::assert_that(
+    is.null(seed) || (.dgpage_is_finite_scalar(seed) && seed >= 0 && seed == round(seed)),
+    msg = "seed must be NULL or a finite integer."
+  )
+
+  row_space <- .prepare_dgpage_row_space(X, rank_tol)
+  requested_r <- as.integer(r)
+  if (requested_r > row_space$optimization_rank) {
+    warning(
+      "r cannot exceed the numerical rank of X (", row_space$optimization_rank,
+      "). Setting r = ", row_space$optimization_rank, "."
+    )
+    r <- row_space$optimization_rank
+  } else {
+    r <- requested_r
   }
-  
-  # Initialize P: d x r (random orthonormal)
+
+  # Optional reproducible initialization that does not clobber the caller's
+  # RNG state.
   if (!is.null(seed)) {
+    if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+      old_seed <- get(".Random.seed", envir = globalenv())
+      on.exit(assign(".Random.seed", old_seed, envir = globalenv()), add = TRUE)
+    } else {
+      on.exit(rm(".Random.seed", envir = globalenv()), add = TRUE)
+    }
     set.seed(seed)
   }
-  # We can do e.g. random normal, then orthonormalize:
-  tmp <- matrix(rnorm(d*r), nrow=d, ncol=r)
-  # Orthonormal via QR decomposition:
-  qrtmp <- qr(tmp)
-  P <- qr.Q(qrtmp)  # d x r (orthonormal columns)
-  
-  # Initialize W to the identity or zeros: n x n
-  W <- diag(1, n, n)
-  
-  # a small function to compute the objective F(P,W) from Eq. (12) for monitoring
-  compute_objective <- function(P, W) {
-    # 1) reconstruction residual part: sum_{i=1}^n || P^T (z_i - Z w_i) ||^2
-    #    can be written as || P^T (Z - Z W) ||_F^2
-    #    that is trace( P^T (Z - ZW)(Z - ZW)^T P )
-    #    but let's do it more directly: Y = P^T Z, => r x n
-    #    Then Y - YW? Actually from Eq. (14) in the paper we do
-    #    || P^T(Z - ZW) ||_F^2 = || Y - YW ||_F^2  where Y = P^T Z
-    Y <- t(P) %*% Z  # r x n
-    YW <- Y %*% W    # r x n
-    part1 <- sum((Y - YW)^2)
-    
-    # 2) alpha * || D W ||_F^2
-    part2 <- alpha * sum((D %*% W)^2)
-    
-    # 3) beta * sum_{i,j} || P^T z_i - P^T z_j ||^2 w_{ij}
-    #    + (1 - alpha - beta) * sum_{i,j} || P^T z_i - P^T z_j ||^2 s_{ij}
-    #    We can unify them: sum_{i,j} (||P^T z_i - P^T z_j||^2) * [ beta*w_{ij} + (1-alpha-beta)*s_{ij} ]
-    #    We'll do a single pass i < j to save time, or do matrix logic
-    #    We'll define L = beta*W + (1 - alpha - beta)*S, then use the standard LPP form:
-    #    sum_{i,j} ||y_i - y_j||^2 L_{ij} = trace( Y L Y^T ), where Y is n x r if we treat rows as samples.
-    #    But we have Y as r x n => let's define Y^T = n x r => then trace( Y^T L Y^T ) doesn't quite match dimension...
-    #    Actually from the paper's standard approach: trace( P^T Z L Z^T P ).
-    
-    L <- beta * W + (1 - alpha - beta) * S  # n x n
-    # Then the standard formula => trace( P^T Z L Z^T P )
-    # i.e. sum_{i,j} w_{ij} * ||P^T z_i - P^T z_j||^2
-    # We'll do M = Z L Z^T => d x d, then part3 = trace( P^T M P )
-    # we can do sum(diag( P^T M P )) = sum(diag( M P P^T )) if P has orthonormal columns => but let's do direct
-    M <- Z %*% L %*% t(Z)  # d x d
-    part3 <- sum(diag(t(P) %*% M %*% P))
-    
-    return(part1 + part2 + part3)
+
+  # Optimize only in the numerical row space of X. This removes feature-null
+  # directions and reduces each eigenproblem from d to optimization_rank.
+  X_reduced <- row_space$X_reduced
+  Z_reduced <- t(X_reduced)
+  optimization_rank <- row_space$optimization_rank
+  I_n <- diag(1, n)
+  DtD <- crossprod(D)
+  G_S <- .pairwise_laplacian(S)
+  N <- tcrossprod(Z_reduced)
+  ridge_eff <- ridge * mean(diag(N))
+  N_reg <- N + ridge_eff * diag(optimization_rank)
+  chol_N <- tryCatch(chol(N_reg), error = function(e) NULL)
+  if (is.null(chol_N)) {
+    stop("The row-space total-scatter matrix is not positive definite; increase ridge or rank_tol.",
+         call. = FALSE)
   }
-  
-  # iterative optimization
-  old_obj <- compute_objective(P, W)
-  if (verbose) cat(sprintf("Initial objective = %.6f\n", old_obj))
-  
+  N_inv_half <- backsolve(chol_N, diag(optimization_rank))
+
+  # Objective F(P, W) from Eq. (12), used for monitoring and convergence.
+  # tr(Y G Y^T) computed as sum((Y %*% G) * Y) to avoid forming d x d products.
+  graph_quad <- function(Y, G) sum((Y %*% G) * Y)
+  compute_objective <- function(Y, W, G_W) {
+    part1 <- sum((Y - Y %*% W)^2)                 # ||P^T Z (I - W)||_F^2
+    part2 <- alpha * sum((D %*% W)^2)             # alpha ||D W||_F^2
+    part3 <- beta * graph_quad(Y, G_W) +          # beta sum_ij w_ij e_ij
+      (1 - alpha - beta) * graph_quad(Y, G_S)     # (1-a-b) sum_ij s_ij e_ij
+    part1 + part2 + part3
+  }
+
+  # Initialize in whitened coordinates so P satisfies the generalized
+  # constraint before the first W update, independent of measurement units.
+  tmp <- matrix(rnorm(optimization_rank * r), nrow = optimization_rank, ncol = r)
+  P_reduced <- N_inv_half %*% qr.Q(qr(tmp))
+  Y <- crossprod(P_reduced, Z_reduced)
+  W <- .update_dgpage_W(Y, DtD, alpha, beta)
+  old_obj <- compute_objective(Y, W, .pairwise_laplacian(W))
+  initial_objective <- old_obj
+  if (verbose) message(sprintf("Initial objective = %.6f", old_obj))
+
+  obj_trace <- numeric(maxiter)
+  converged <- FALSE
+  final_rel_change <- Inf
+
   for (iter in seq_len(maxiter)) {
-    # --- Step 1: Fix P, solve for W  (Eq. (18) in the paper) ---
-    # We define:
-    #   Y = P^T Z => r x n
-    #   E_{ij} = || y_i - y_j ||^2, but y_i is the i-th column => dimension r.
-    #   Then W = (2 Y^T Y + 2 alpha D^T D)^(-1) (2 Y^T Y - beta E)
-    #   where E is n x n with E[i,j] = e_{ij}.
-    
-    Y <- t(P) %*% Z  # r x n
-    
-    # compute E (n x n) more efficiently as pairwise squared distances
-    Yt <- t(Y)  # n x r
-    G <- rowSums(Yt^2)
-    E <- outer(G, G, "+") - 2 * (Yt %*% t(Yt))
-    E[E < 0] <- 0
-    
-    # YtY = t(Y) %*% Y => dimension: (n x r) * (r x n) = n x n
-    YtY <- t(Y) %*% Y
-    
-    matA <- 2 * YtY + 2 * alpha * (t(D) %*% D)  # (n x n)
-    matB <- 2 * YtY - beta * E                 # (n x n)
-    
-    W_new <- tryCatch({
-      solve(matA, matB)
-    }, error = function(e) {
-      MASS::ginv(matA) %*% matB
-    })
-    
-    # --- Step 2: Fix W, solve for P (Eq. (23) in the paper) ---
-    # We define:
-    #   K = (I - W)(I - W)^T => n x n
-    #   L_W = H - W where H is diag row-sums of W => n x n
-    #   L_S = Q - S where Q is diag row-sums of S => n x n
-    #   A = K + beta L_W + (1 - alpha - beta) L_S => n x n
-    #   Then solve generalized eigen-problem:
-    #     Z A Z^T p = lambda Z Z^T p
-    
-    I_n <- diag(1, n)
-    K <- (I_n - W_new) %*% t(I_n - W_new)  # n x n
-    # compute L_W = H - W
-    rowSumW <- rowSums(W_new)
-    H <- diag(rowSumW, n, n)
-    L_W <- H - W_new
-    
-    # compute L_S = Q - S
-    rowSumS <- rowSums(S)
-    Q <- diag(rowSumS, n, n)
-    L_S <- Q - S
-    
-    A <- K + beta * L_W + (1 - alpha - beta) * L_S  # n x n
-    
-    # M = Z A Z^T => d x d
-    M <- Z %*% A %*% t(Z)
-    # N = Z Z^T => d x d
-    N <- Z %*% t(Z)
-    
-    # Solve M p = lambda N p. We want the r smallest eigenvalues.
-    # We'll use the 'geigen' from the 'geigen' package if installed, or fallback.
-    # For demonstration, let's do 'geigen::geigen' or base 'eigen' trick:
-    # We can do a standard trick: solve(N, M). Then do eigen( solve(N) %*% M ) => might be unstable.
-    
-    # safer approach for large d might be RSpectra or something. We'll do a small approach here:
-    # we do: solve(N, M) p = lambda p => standard eigenproblem.
-    
-    # to avoid singular N, we can do a tiny Tikhonov or check rank.
-    # We'll do a try-catch:
-    Mtilde <- tryCatch({
-      solve(N, M)
-    }, error = function(e) {
-      # fallback if singular
-      MASS::ginv(N) %*% M
-    })
-    
-    eigres <- tryCatch({
-      RSpectra::eigs(Mtilde, k = r, which = "SM")
-    }, error = function(e) {
-      eigen(Mtilde, symmetric = FALSE)
-    })
-    if (!is.null(attr(eigres, "class")) && any(attr(eigres, "class") == "eigs")) {
-      P_eigs <- eigres$vectors
-    } else {
-      idx <- order(Re(eigres$values))[seq_len(r)]
-      P_eigs <- eigres$vectors[, idx, drop = FALSE]
-    }
-    
-    # we might want to re-orthonormalize P
-    # in principle, the generalized eigenvectors are typically not orthonormal w.r.t. the standard dot product.
-    # But let's do a plain QR for numerical stability:
-    qrP <- qr(P_eigs)
-    P_new <- qr.Q(qrP)
-    
-    # update
-    W <- W_new
-    P <- P_new
-    
-    # compute new objective
-    new_obj <- compute_objective(P, W)
-    rel_diff <- abs(new_obj - old_obj) / (old_obj + 1e-15)
+    # End each iteration after W is optimized for the current P, so every
+    # returned state is coherent even when maxiter is exhausted.
+    P_reduced <- .update_dgpage_P(
+      W, Z_reduced, N_inv_half, G_S, alpha, beta, r, I_n
+    )
+    Y <- crossprod(P_reduced, Z_reduced)
+    W <- .update_dgpage_W(Y, DtD, alpha, beta)
+    new_obj <- compute_objective(Y, W, .pairwise_laplacian(W))
+    assertthat::assert_that(is.finite(new_obj), msg = "DGPAGE objective became non-finite.")
+    obj_trace[iter] <- new_obj
+    final_rel_change <- abs(new_obj - old_obj) / max(abs(old_obj), .Machine$double.eps)
     if (verbose) {
-      cat(sprintf("Iter %2d: objective=%.6f, rel_diff=%.6f\n", iter, new_obj, rel_diff))
-    }
-    
-    if (rel_diff < tol) {
-      if (verbose) cat("Converged!\n")
-      break
+      message(sprintf("Iter %2d: objective=%.6f, rel_diff=%.6g", iter, new_obj, final_rel_change))
     }
     old_obj <- new_obj
-  } # end for
-  
-  final_obj <- compute_objective(P, W)
-  
+
+    if (final_rel_change < tol) {
+      converged <- TRUE
+      if (verbose) message("Converged.")
+      break
+    }
+  }
+
+  obj_trace <- obj_trace[seq_len(iter)]
+  P <- (row_space$basis %*% P_reduced) / row_space$data_scale
+
   list(
     P = P,
+    P_reduced = P_reduced,
     W = W,
-    objective = final_obj,
+    objective = old_obj,
+    obj_trace = obj_trace,
     iter = iter,
-    Z = Z  # for reference
+    converged = converged,
+    final_rel_change = final_rel_change,
+    initial_objective = initial_objective,
+    Z = t(X),
+    Z_reduced = Z_reduced,
+    row_basis = row_space$basis,
+    optimization_rank = optimization_rank,
+    requested_r = requested_r,
+    effective_r = r,
+    rank_threshold = row_space$rank_threshold,
+    rank_tol = row_space$relative_rank_tol,
+    data_scale = row_space$data_scale,
+    ridge = ridge,
+    ridge_effective = ridge_eff
   )
 }
 
 
 # -------------------------------------------------------------------------
-#  3) Prediction (1-NN) using Rnanoflann
+#  3) Prediction (k-NN) using Rnanoflann
 # -------------------------------------------------------------------------
 
-#' Predict labels using a trained DGPAGE model via 1-NN classification
+#' Predict labels using a trained DGPAGE model via k-NN classification
 #'
-#' After you have fit the DGPAGE model to some labeled training data \code{Xtrain}, you can
-#' project \code{Xtrain} and store their embeddings \code{Ytrain}, then for \emph{new} data
-#' \code{Xtest}, you project them using the learned \code{P}, and perform a \strong{1-nearest neighbor}
-#' search in the low-dimensional subspace using \pkg{Rnanoflann}.
+#' After you have fit the DGPAGE model to some labeled training data, store the
+#' training labels on the model (\code{model$ytrain <- y}). For \emph{new} data
+#' \code{Xtest}, this function projects both training and test data using the
+#' learned \code{P} and performs a k-nearest-neighbor search in the
+#' low-dimensional subspace using \pkg{Rnanoflann}.
 #'
-#' @param model The list returned by \code{\link{dgpage_fit}}.  
-#'              Must also contain \code{ytrain} (the vector of training labels) and \code{Ytrain} 
-#'              (the \eqn{n x r} embedding of training data), which you can store yourself.
+#' @param model The list returned by \code{\link{dgpage_fit}}, augmented with
+#'   \code{ytrain} (the vector of training labels). The training embedding is
+#'   derived from \code{model$P} and \code{model$Z}, so nothing else needs to
+#'   be stored.
 #' @param Xtest A numeric matrix of size \eqn{m \times d} (test data).
-#' @param k Number of neighbors (default 1).
+#' @param k Number of neighbors (default 1). For \code{k > 1} a majority vote
+#'   is taken, with ties broken by factor level order.
 #' @param method Distance method for \code{\link[Rnanoflann]{nn}}. Default "euclidean".
 #'
-#' @return A vector of length \eqn{m} with predicted labels.
-#' @details This helper is retained for backward compatibility.  The
-#'   recommended approach is to call \code{predict()} on the
-#'   \code{dgpage_discriminant} object returned by \code{dgpage_discriminant}.
+#' @return A factor of length \eqn{m} with predicted labels.
 #' @export
 #' @seealso \code{\link[Rnanoflann]{nn}}
 #' @examples
 #' \dontrun{
-#'   # Suppose we already fit a model:
-#'   # model$Ytrain <- t(model$P) %*% model$Z  # r x n -> we store its transpose below
-#'   # model$Ytrain_t <- t(model$Ytrain)       # n x r
-#'   # model$ytrain  <- y  # training labels
-#'   #
-#'   # Now we get new data Xtest:
+#'   model <- dgpage_fit(Xtrain, S, D, r = 2)
+#'   model$ytrain <- ytrain
 #'   preds <- dgpage_predict(model, Xtest)
 #' }
 dgpage_predict <- function(model, Xtest, k=1, method="euclidean") {
   if (is.null(model$P) || is.null(model$Z)) {
     stop("model does not contain P or Z. Did you remove them?")
   }
-  if (is.null(model$Ytrain) || is.null(model$ytrain)) {
-    stop("model does not contain Ytrain or ytrain. Please store them after training.")
+  if (is.null(model$ytrain)) {
+    stop("model does not contain ytrain (the training labels). ",
+         "Store them after training, e.g. model$ytrain <- y.")
   }
-  
-  # project Xtest using P
-  Ztest <- t(Xtest)                 # d x m
-  Ytest <- t(model$P) %*% Ztest     # r x m
-  Ytest_t <- t(Ytest)               # m x r
-  
- 
-  # data= model$Ytrain_t, points= Ytest_t
+  Xtest <- as.matrix(Xtest)
+  assertthat::assert_that(is.numeric(Xtest), msg = "Xtest must be numeric.")
+  assertthat::assert_that(all(is.finite(Xtest)), msg = "Xtest must contain only finite values.")
+  assertthat::assert_that(ncol(Xtest) == nrow(model$P),
+                          msg = "Xtest must have the same number of columns as the training data.")
+  assertthat::assert_that(length(model$ytrain) == ncol(model$Z),
+                          msg = "Length of ytrain must match the number of training samples.")
+  k <- .validate_knn_k(k, ncol(model$Z))
+
+  # Training embedding (n x r), derived from the stored P and Z
+  Ytrain <- crossprod(model$Z, model$P)
+  # Test embedding (m x r)
+  Ytest <- Xtest %*% model$P
+
+  # trans = TRUE returns indices as an m x k matrix (verified empirically)
   res <- nn(
-    data   = model$Ytrain_t,
-    points = Ytest_t,
+    data   = Ytrain,
+    points = Ytest,
     k      = k,
-    method = method
+    method = method,
+    trans  = TRUE
   )
-  # res$indices is k x m if trans=TRUE. We see the doc: by default, trans=TRUE => it might be
-  #   or if trans=FALSE => then it is m x k. Let's check carefully.
-  # Usually, res$indices is (k x m) if default trans=TRUE.
-  indices <- t(res$indices)  # make it m x k if needed
-  
-  # For k=1, we just pick the single neighbor:
-  if (k == 1) {
-    preds <- model$ytrain[ indices[,1] ]
-  } else {
-    # if k>1, we can do a majority vote or something
-    # but for demonstration we do the first neighbor
-    preds <- model$ytrain[ indices[,1] ]
-  }
-  
-  return(preds)
+
+  .knn_vote(model$ytrain, res$indices)
 }
 
-#' Print a `dgpage_discriminant` object
-#'
-#' Prints the standard `discriminant_projector` header followed by
-#' DGPAGE-specific fields (adjacency size, objective, hyperparameters).
-#'
-#' @param x A `dgpage_discriminant` object.
-#' @param ... Additional arguments (ignored).
-#'
-#' @return The input `x`, invisibly.
-#' @method print dgpage_discriminant
+#' @title Print method for dgpage_projector objects
+#' @description Print a \code{dgpage_projector} object and summary information.
+#' @param x A \code{dgpage_projector} object.
+#' @param ... Additional arguments passed to the next print method.
+#' @method print dgpage_projector
 #' @export
-print.dgpage_discriminant <- function(x, ...) {
-  NextMethod()
-  if (!is.null(x$W)) {
-    cat(sprintf("  Adjacency:  %d x %d\n", nrow(x$W), ncol(x$W)))
-  }
-  if (!is.null(x$objective)) {
-    cat(sprintf("  Objective:  %.3f\n", x$objective))
-  }
-  if (!is.null(x$alpha) || !is.null(x$beta)) {
-    cat(sprintf("  alpha = %g  beta = %g\n",
-                x$alpha %||% NA, x$beta %||% NA))
-  }
-  invisible(x)
+print.dgpage_projector <- function(x, ...) {
+  cat("A 'dgpage_projector' object (subclass of 'discriminant_projector').\n")
+  cat("Learned adjacency graph W of size:", nrow(x$W), "x", ncol(x$W), "\n")
+  convergence_label <- if (isTRUE(x$converged)) "converged" else "not converged"
+  cat(sprintf("Objective: %.3f (%d iterations; %s)\n",
+              x$objective, x$iter, convergence_label))
+  cat("Embedding dimensions:", x$effective_r, "of", x$requested_r,
+      "requested; numerical rank:", x$optimization_rank, "\n")
+  cat("alpha:", x$alpha, " beta:", x$beta, "\n")
+  # Then delegate the rest to the standard print for discriminant_projector:
+  NextMethod()  # calls print.discriminant_projector
 }
-
-

@@ -2,22 +2,30 @@
 % Please edit documentation in R/allda.R
 \name{initialize_parameters}
 \alias{initialize_parameters}
-\title{Initialize Parameters for ALLDA}
+\title{Initialize Similarity Matrix for ALLDA}
 \usage{
 initialize_parameters(X, y, ncomp, k)
 }
 \arguments{
-\item{X}{Data matrix of size n x d (n samples, d features).}
+\item{X}{A numeric data matrix of size n x d (n samples, d features), typically
+the PCA-reduced data.}
 
-\item{y}{Label vector of length n (not directly used here but kept for consistency).}
+\item{y}{Label vector (length n). The initial graph connects only same-class
+neighbors.}
 
-\item{ncomp}{Reduced dimension (not used here but included for consistency).}
+\item{ncomp}{Reduced dimension (integer). Not used in this specific initialization
+function, but included for API consistency.}
 
-\item{k}{Number of neighbors.}
+\item{k}{The number of neighbors (integer) to consider for each point.}
 }
 \value{
-A list containing the initialized similarity matrix S.
+A list containing the initialized similarity matrix \code{S} (n x n) as a
+sparse \code{Matrix} (k non-zeros per row).
 }
 \description{
-Initialize the similarity matrix S based on k-nearest neighbors.
+Initializes the similarity matrix S based on k-nearest neighbors (KNN).
+Each point \code{i} is connected to its \code{k} nearest neighbors \code{j} with a
+weight \code{S_ij = 1/k}. Neighbor search is restricted to points with the same
+class label as \code{i}.
 }
+\keyword{internal}

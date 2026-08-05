@@ -2,8 +2,7 @@
 % Please edit documentation in R/solde_tr.R
 \name{solde_tr}
 \alias{solde_tr}
-\title{Stable and Orthogonal Local Discriminant Embedding using Trace Ratio Criterion (SOLDE-TR)
-with nanoflann-based k-NN for Fast Adjacency Construction}
+\title{Stable Orthogonal Local Discriminant Embedding by Trace Ratio}
 \usage{
 solde_tr(
   X,
@@ -14,125 +13,87 @@ solde_tr(
   m = 10,
   tol = 1e-06,
   maxit = 100,
-  pca_preprocess = TRUE
+  pca_preprocess = TRUE,
+  denominator_tol = 1e-08
 )
 }
 \arguments{
-\item{X}{A numeric matrix of size \eqn{N \times D} (row-wise samples).}
+\item{X}{Numeric matrix with samples in rows and features in columns.}
 
-\item{y}{A numeric vector of length \eqn{N} (class labels).}
+\item{y}{Class labels with length equal to \code{nrow(X)}.}
 
-\item{s}{Number of neighbors for adjacency; default = 5.}
+\item{s}{Positive integer number of nearest neighbors.}
 
-\item{alpha}{Numeric in \eqn{[0.5, 1]}. Balances \eqn{L_s} vs \eqn{L_v} in
-\eqn{L_d = alpha * L_s - (1-alpha)*L_v}; default = 0.9.}
+\item{alpha}{Number in \verb{[0.5, 1]} controlling the similarity/diversity
+balance in \eqn{L_d = \alpha L_s - (1 - \alpha)L_v}.}
 
-\item{sigma}{Positive scalar for the heat kernel \(\exp(-\|x_i - x_j\|^2 / \sigma)\); default = 1.0.}
+\item{sigma}{Positive heat-kernel scale in
+\eqn{\exp(-||x_i-x_j||^2 / \sigma)}.}
 
-\item{m}{Desired dimension of the subspace; default = 10.}
+\item{m}{Positive integer number of projection dimensions.}
 
-\item{tol}{Stopping threshold for change in trace ratio; default = 1e-6.}
+\item{tol}{Positive relative convergence tolerance for the trace ratio.}
 
-\item{maxit}{Maximum number of ITR iterations; default = 100.}
+\item{maxit}{Positive integer maximum number of trace-ratio iterations.}
 
-\item{pca_preprocess}{Logical: whether to do PCA to ensure full rank; default = TRUE.}
+\item{pca_preprocess}{Logical; remove numerically null PCA directions before
+fitting.}
+
+\item{denominator_tol}{Positive relative eigenvalue floor for the
+trace-ratio denominator. If the constructed denominator is indefinite or
+nearly singular, the smallest diagonal shift that reaches this floor is
+applied and returned in \code{denominator_shift}.}
 }
 \value{
-A list with:
-\item{\code{W_pca}}{The PCA projection matrix (columns are the top PCA components).}
-\item{\code{W_solde_tr}}{The \eqn{m} projection vectors from the trace ratio solution in the PCA subspace.}
-\item{\code{W}}{The final \eqn{D x m} projection matrix = \(\mathbf{W}\emph{{\mathrm{PCA}} \times \mathbf{W}}{\mathrm{SOLDE-TR}}\).}
-\item{\code{eigvals_pca}}{Eigenvalues of the PCA step (if \code{pca_preprocess} = TRUE).}
-\item{\code{trace_ratio_history}}{Vector of trace ratio values across ITR iterations.}
+A \code{\link[multivarious:discriminant_projector]{multivarious::discriminant_projector()}} with class \code{"solde_tr"}.
+In addition to the standard projector fields it contains:
+\describe{
+\item{W_pca}{PCA loading matrix, or a sparse identity matrix when PCA
+is disabled.}
+\item{W_solde_tr}{Orthogonal trace-ratio directions in the fitted
+coordinate system.}
+\item{eigvals_pca}{Retained PCA eigenvalues, or \code{NULL}.}
+\item{trace_ratio_history}{Objective values for accepted iterates.}
+\item{iterations}{Number of trace-ratio iterations performed.}
+\item{converged}{Whether the stopping rule was met.}
+\item{denominator_shift}{Adaptive diagonal regularization applied to the
+trace-ratio denominator.}
+}
 }
 \description{
-This is an extension of the SOLDE-TR algorithm described in:
-\insertRef{yang2017stable}{}
-
-The method extends the Stable Orthogonal Local Discriminant Embedding (SOLDE)
-approach by recasting its objective function into a trace ratio optimization problem
-and using an iterative trace-ratio (ITR) algorithm to jointly learn the orthogonal
-projection vectors. Compared to the step-by-step SOLDE, SOLDE-TR converges faster,
-yields a global solution, and usually provides improved performance in tasks such as
-face recognition.
-
-\strong{What is new in this version?}
-We accelerate the adjacency graph construction (Steps 1--2 in Section 3 of the paper)
-by using the \code{Rnanoflann} package, which provides a \code{nanoflann}-backed kd-tree
-for extremely fast nearest neighbor (k-NN) queries. This can be a substantial improvement
-over naive \eqn{O(N^2)} neighbor searches when \eqn{N} is large.
-
-\strong{Correspondence to the Paper Sections:}
-\itemize{
-\item \strong{Equations (1), (2), (3):} Construction of adjacency (weight) matrices
-\eqn{S}, \eqn{H}, \eqn{F} for similarity, diversity, and inter-class separability.
-\item \strong{Equations (4)--(6):} Objective functions in local discriminant embedding.
-\item \strong{Equation (7):} Combination into \eqn{L_d = \alpha L_s - (1-\alpha)L_v}.
-\item \strong{Equations (11)--(16):} The trace ratio formulation and iterative algorithm.
-}
+Fits SOLDE-TR using sparse nearest-neighbor graphs and a deterministic
+iterative trace-ratio solver. Predictors are always centered. Optionally,
+PCA is used to remove null directions before graph construction and
+optimization.
 }
 \details{
-Main steps:
-\enumerate{
-\item \strong{(Optional) PCA Projection:}
-We project \eqn{X} into a PCA subspace to ensure \eqn{S_d} is nonsingular.
+A single nearest-neighbor query is shared by all three graphs. Self indices
+are removed explicitly, which remains correct under zero-distance ties. The
+similarity (\code{S}), diversity (\code{H}), and interclass (\code{F}) graphs and their
+Laplacians are sparse, so storage grows with the number of neighbor edges
+rather than quadratically in the number of samples.
 
-\item \strong{Build Adjacency Graphs with \code{Rnanoflann}:}
-- \eqn{S} (similarity)
-If two points \eqn{x_i} and \eqn{x_j} belong to the same class and either
-\eqn{x_j} is among the \eqn{s} nearest neighbors of \eqn{x_i} \emph{or}
-\eqn{x_i} is among the \eqn{s} neighbors of \eqn{x_j}, then
-\eqn{S_{ij} = \exp(-\|x_i - x_j\|^2/\sigma)}.
-- \eqn{H} (diversity)
-Same condition (same-class neighbors), but \eqn{H_{ij} = 1 - \exp(-\|x_i - x_j\|^2/\sigma)}.
-- \eqn{F} (interclass)
-If \eqn{x_i} and \eqn{x_j} are from different classes \emph{and} they are in each
-other's \eqn{s} neighborhoods (union condition),
-then \eqn{F_{ij} = \exp(-\|x_i - x_j\|^2/\sigma)}.
-
-\if{html}{\out{<div class="sourceCode">}}\preformatted{We implement this neighbor search using \code{nanoflann}'s kd-tree via \code{nn()} from
-the \pkg{Rnanoflann} package for Euclidean distance.
-}\if{html}{\out{</div>}}
-
-\item \strong{Iterative Trace Ratio (ITR):}
-Solve
-\deqn{
-      \max_{W^T W = I} \frac{\mathrm{tr}(W^T S_p W)}{\mathrm{tr}(W^T S_d W)},
-    }
-with \eqn{S_p = X L_m X^T} and \eqn{S_d = X L_d X^T}, via the iterative approach:
-\eqn{\mathbf{M} = \mathbf{S_p} - \lambda \mathbf{S_d}}, eigen-decompose \(\mathbf{M}\),
-pick the top \eqn{m} eigenvectors.  Update \(\lambda\), repeat until convergence.
-
-\item \strong{Final Embedding:}
-\eqn{\mathbf{W} = \mathbf{W}_{\mathrm{PCA}} \times \mathbf{W}_{\mathrm{SOLDE-TR}}}.
-}
+The trace-ratio iteration maximizes
+\deqn{tr(W^T S_p W) / tr(W^T S_d W), \quad W^T W = I.}
+At each iteration it extracts the leading eigenvectors of
+\eqn{S_p - \rho S_d}. The initial ratio is zero, making the procedure
+deterministic and leaving R's random-number state unchanged.
 }
 \examples{
-\dontrun{
- # Simple test on a small dataset
- library(Rnanoflann)
- set.seed(1)
- N <- 100
- D <- 20
- X <- matrix(rnorm(N*D), nrow = N, ncol = D)
- y <- sample.int(3, size = N, replace = TRUE)
+set.seed(1)
+X <- matrix(rnorm(60 * 8), nrow = 60)
+y <- factor(rep(1:3, each = 20))
+fit <- solde_tr(X, y, s = 4, m = 2)
+multivarious::project(fit, X[1:5, , drop = FALSE])
 
- solde_res <- SOLDE_TR_fastNN(X, y, s=5, alpha=0.9, sigma=1.0, m=8, tol=1e-5, maxit=50)
- # Project new data X_new:
- # Ynew <- t(solde_res$W) \%*\% t(X_new)
-}
 }
 \references{
-\enumerate{
-\item Yang, X., Liu, G., Yu, Q., & Wang, R. (2017).
-\emph{Stable and orthogonal local discriminant embedding using trace ratio criterion for dimensionality reduction.}
-Pattern Recognition, 71, 249--264.
-\item Wang, J., Zhu, X., & Gong, S. (2007).
-\emph{ITR: Iterative trace ratio algorithm for feature extraction.}
-IEEE Transactions on Knowledge and Data Engineering.
-\item He, X., Yan, S., Hu, Y., Niyogi, P., & Zhang, H. (2005).
-\emph{Face recognition using Laplacianfaces.}
-IEEE Trans. on Pattern Analysis and Machine Intelligence.
-\item \pkg{Rnanoflann} \url{https://github.com/ManosPapadakis95/Rnanoflann}
-}
+Yang, X., Liu, G., Yu, Q., and Wang, R. (2018). Stable and orthogonal local
+discriminant embedding using trace ratio criterion for dimensionality
+reduction. \emph{Multimedia Tools and Applications}, 77, 3071--3081.
+\doi{10.1007/s11042-017-5022-1}
+
+Wang, H., Yan, S., Xu, D., Tang, X., and Huang, T. (2007). Trace ratio vs.
+ratio trace for dimensionality reduction. \emph{Proceedings of CVPR 2007}.
+\doi{10.1109/CVPR.2007.382983}
 }

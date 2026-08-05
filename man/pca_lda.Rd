@@ -2,73 +2,100 @@
 % Please edit documentation in R/pca_lda.R
 \name{pca_lda}
 \alias{pca_lda}
-\title{PCA followed by Linear Discriminant Analysis}
+\title{Principal Components Followed by Fisher Linear Discriminants}
 \usage{
 pca_lda(
   X,
   Y,
   preproc = center(),
-  dp = min(dim(X)),
-  di = dp - 1,
-  dl = length(unique(Y)) - 1
+  dp = NULL,
+  di = NULL,
+  dl = NULL,
+  tol = 1e-06,
+  ncomp = NULL
 )
 }
 \arguments{
-\item{X}{A numeric matrix of size \code{n x d}, where \code{n} is the number of samples (rows)
-and \code{d} is the number of features (columns).}
+\item{X}{Numeric matrix or data frame with samples in rows and features in
+columns.}
 
-\item{Y}{A factor or numeric vector of length \code{n} representing class labels for each sample.
-If numeric, it will be converted to a factor.}
+\item{Y}{Class labels with length equal to \code{nrow(X)}.}
 
-\item{preproc}{A preprocessing function from the \code{multivarious} package (e.g. \code{center()}, \code{scale()})
-to apply to the data before PCA. Defaults to centering.}
+\item{preproc}{A fitted or unfitted preprocessing specification from
+\pkg{multivarious}. The default centers the predictors.}
 
-\item{dp}{Integer. The dimension of the initial PCA projection. Defaults to \code{min(dim(X))}, i.e.,
-the smaller of the number of samples or features. Must be at least 2 and at most \code{min(n,d)}.}
+\item{dp}{Optional positive integer giving the PCA dimension. The default,
+\code{NULL}, uses at most \code{nrow(X) - nlevels(Y)} components, as in the
+Fisherfaces construction, and never exceeds the numerical PCA rank.}
 
-\item{di}{Integer. The dimension of the within-class projection, typically \code{dp-1}. Defaults to \code{dp-1}.}
+\item{di}{Optional positive integer giving the dimension used to whiten the
+within-class scatter in PCA space. The default keeps its full positive
+numerical rank. If fewer directions are requested, those with the largest
+within-class eigenvalues are retained for numerical stability.}
 
-\item{dl}{Integer. The dimension of the between-class projection. Defaults to \code{length(unique(Y))-1}, which
-is often the maximum number of discriminative axes for LDA.}
+\item{dl}{Optional positive integer giving the final discriminant dimension.
+The default uses the numerical between-class rank, bounded by
+\code{nlevels(Y) - 1} and \code{di}.}
+
+\item{tol}{Relative numerical-rank tolerance in \verb{(0, 1)} for the PCA,
+within-class, and between-class eigenspectra.}
+
+\item{ncomp}{Optional compatibility alias for \code{dl}. Supplying both arguments
+is an error unless they are identical.}
 }
 \value{
-An object of class \code{discriminant_projector} (from \code{multivarious}) containing:
-\itemize{
-\item \code{rotation}: The final projection matrix of size \code{d x dl}, mapping from original features to \code{dl}-dimensional space.
-\item \code{s}: The projected data scores of size \code{n x dl}, where each row is a sample in the reduced space.
-\item \code{sdev}: The standard deviations of each dimension in the projected space.
-\item \code{labels}: The class labels associated with each sample.
-\item \code{dp}, \code{di}, \code{dl}: The specified or inferred PCA/LDA dimensions.
-\item \code{preproc}: The preprocessing object used.
+A \code{\link[multivarious:discriminant_projector]{multivarious::discriminant_projector()}} with class \code{"pca_lda"}.
+In addition to the standard projector fields, it contains:
+\describe{
+\item{eigenvalues}{The Fisher generalized eigenvalues of the returned
+discriminant directions.}
+\item{dp, di, dl}{The fitted PCA, within-whitening, and final
+discriminant dimensions.}
+\item{pca_rank, within_rank, between_rank}{Numerical ranks diagnosed at
+the three decomposition stages.}
+\item{pca_singular_values}{Singular values of the retained PCA axes.}
+\item{within_eigenvalues}{Within-class eigenvalues used for whitening.}
+\item{pca_center}{The mean used to estimate the PCA basis.}
+\item{tol}{The relative rank tolerance used by the fit.}
 }
 }
 \description{
-This function applies Principal Component Analysis (PCA) followed by Linear Discriminant Analysis (LDA) to a given dataset.
-The data is first projected onto \code{dp} principal components, then further transformed via a two-step LDA procedure:
-an intermediate within-class projection of dimension \code{di}, followed by a final between-class projection of dimension \code{dl}.
-This sequence of transformations aims to reduce dimensionality while enhancing class separability.
+Fits a rank-aware PCA plus linear discriminant analysis model, commonly
+called the Fisherfaces construction. PCA first restricts the predictors to
+a stable subspace; Fisher LDA is then solved there using the class-size
+weighted between-class scatter and the within-class scatter.
 }
 \details{
-The function proceeds through the following steps:
-\enumerate{
-\item \strong{Preprocessing}: The data \code{X} is preprocessed using the specified \code{preproc} function.
-\item \strong{PCA Projection}: The preprocessed data is projected onto the first \code{dp} principal components.
-\item \strong{Within-Class Scatter}: The within-class scatter matrix \code{Sw} is computed in the PCA-transformed space.
-\item \strong{Between-Class Scatter}: The between-class scatter matrix \code{Sb} is computed in the PCA-transformed space.
-\item \strong{Within-Class Projection}: The eigen-decomposition of \code{Sw} is used to derive an intermediate projection of dimension \code{di}.
-\item \strong{Between-Class Projection}: The projected group means are subjected to PCA to derive a final projection of dimension \code{dl}.
-\item \strong{Final Projection}: The data is ultimately projected onto the \code{dl}-dimensional subspace that maximizes class separation.
-}
+Let \eqn{P} contain the retained principal axes. In PCA coordinates the
+method forms the normalized within- and between-class scatters \eqn{S_w}
+and \eqn{S_b}. Class contributions to \eqn{S_b} are weighted by their sample
+counts. After whitening the positive part of \eqn{S_w}, it solves the
+symmetric eigenproblem
+\deqn{S_b w = \lambda S_w w}
+and maps the leading solutions back through \eqn{P}. For the full retained
+within-class rank, the returned directions \eqn{V} satisfy
+\eqn{V^T S_w V = I} and diagonalize the corresponding between-class scatter.
+
+The PCA basis is always estimated from centered preprocessed data. Projected
+scores still follow \code{preproc}: with the default centering they are centered,
+while an explicit \code{\link[multivarious:pass]{multivarious::pass()}} preserves the input origin. The
+fitted \code{pca_center} is returned to make this distinction explicit.
+
+Directions in the numerical null space of the within-class scatter are
+discarded rather than inverted. When \code{dp} is larger than the available
+within-class rank, \code{di = NULL} selects only its positive part.
 }
 \examples{
-\dontrun{
-data(iris)
 X <- as.matrix(iris[, 1:4])
-Y <- iris[, 5]
-# Reduce to a space of dp=4, di=3, dl=2 for illustration
-res <- pca_lda(X, Y, di=3)
+fit <- pca_lda(X, iris$Species, dl = 2)
+multivarious::project(fit, X[1:5, , drop = FALSE])
 }
+\references{
+Belhumeur, P. N., Hespanha, J. P., and Kriegman, D. J. (1997). Eigenfaces
+vs. Fisherfaces: Recognition Using Class Specific Linear Projection. \emph{IEEE
+Transactions on Pattern Analysis and Machine Intelligence}, 19(7), 711--720.
 }
 \seealso{
-\code{\link[multivarious]{pca}}, \code{\link[RSpectra]{eigs_sym}}
+\code{\link[MASS:lda]{MASS::lda()}}, \code{\link[multivarious:pca]{multivarious::pca()}},
+\code{\link[multivarious:discriminant_projector]{multivarious::discriminant_projector()}}
 }

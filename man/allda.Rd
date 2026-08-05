@@ -18,39 +18,94 @@ allda(
 )
 }
 \arguments{
-\item{X}{Data matrix of size n x d (n samples, d features).}
+\item{X}{A numeric data matrix of size n x d (n samples, d features).}
 
-\item{y}{Label vector of length n.}
+\item{y}{A vector of length n containing the class labels for each sample.
+Labels are used to restrict adaptive neighborhoods to within-class points.}
 
-\item{ncomp}{Reduced dimension (must be less than the number of features retained by PCA).}
+\item{ncomp}{The target dimensionality (integer). Must be less than the number
+of features retained after the initial PCA preprocessing step.}
 
-\item{k}{Number of neighbors.}
+\item{k}{The number of same-class neighbors to consider when constructing and
+updating the similarity matrix S (integer). Must be smaller than every class
+size.}
 
-\item{r}{Parameter r (default is 2, must be > 1).}
+\item{r}{Parameter controlling the distance weighting in the similarity update
+(numeric, default is 2). Must be greater than 1. Larger values lead to more
+uniform weights among neighbors.}
 
-\item{preproc}{A preprocessing step from \code{multivarious}. Defaults to centering.}
+\item{preproc}{A preprocessing object from \code{multivarious} specifying steps like
+centering or scaling to be applied before PCA and ALLDA. Defaults to centering
+using \code{multivarious::center()}. ALLDA requires centered total scatter; use
+\code{multivarious::pass()} only when \code{X} is already column-centered.}
 
-\item{max_iter}{Maximum number of iterations (default is 30).}
+\item{max_iter}{Maximum number of iterations for the S and W updates (integer,
+default is 30).}
 
-\item{tol}{Convergence tolerance (default is 1e-4).}
+\item{tol}{Convergence tolerance (numeric, default is 1e-4). Iteration stops
+if the Frobenius norm of the change in S is less than \code{tol}.}
 
-\item{var_retained}{Proportion of variance to retain during PCA (default is 0.95).}
+\item{var_retained}{Proportion of variance to retain during the initial PCA
+step (numeric, default is 0.95). Helps stabilize the process and remove
+null space.}
 
-\item{reg}{Regularization term to ensure invertibility of St (default is 1e-5).}
+\item{reg}{Non-negative relative regularization multiplier used during the W
+update (numeric, default is 1e-5). The diagonal ridge is
+\code{reg * mean(diag(t(X) \%*\% X))}, so changing measurement units does not
+change the fitted subspace.}
 }
 \value{
-An S3 object of class "discriminant_projector" containing the transformation matrix W,
-the transformed scores, and related metadata.
+An S3 object of class \code{discriminant_projector} (from \code{multivarious}),
+inheriting from \code{projector}. This object contains:
+\item{W}{The final projection matrix (d x ncomp) mapping from the preprocessed
+original feature space to the reduced dimension space.}
+\item{scores}{The data projected onto the final \code{W} (n x ncomp).}
+\item{sdev}{Standard deviations of the scores (related to eigenvalues).}
+\item{preproc}{The preprocessing object used.}
+\item{pca_result}{The result from the initial \code{apply_pca} step (list).}
+\item{S}{The final similarity matrix (n x n, sparse \code{Matrix}).}
+\item{W_pca}{The final projection in PCA coordinates. It solves the
+generalized eigenproblem defined by the returned \code{S}.}
+\item{converged}{Whether the last similarity update was smaller than \code{tol}.}
+\item{final_delta}{Frobenius norm of the final similarity update.}
+\item{objective}{Final graph objective for the returned coherent \verb{(W, S)} pair.}
+\item{ncomp}{The target dimensionality.}
+\item{classes}{The specific class name "allda".}
+\item{...}{Other slots inherent to \code{discriminant_projector}.}
+This object can be used with \code{predict()} from \code{multivarious} to project new data.
 }
 \description{
-Perform dimensionality reduction using the ALLDA algorithm.
+Performs dimensionality reduction using the ALLDA algorithm, which
+adaptively learns a similarity structure while performing discriminant analysis.
+It iteratively updates a similarity matrix S and a projection matrix W.
 }
 \examples{
-# result <- allda(X, y, ncomp = 2, k = 5)
-# W <- result$rotation
-# S <- result$S
+# Example using iris data
+data(iris)
+X <- as.matrix(iris[, 1:4])
+y <- iris$Species
+
+# Reduce to 2 dimensions, using 7 neighbors
+# Use tryCatch as ALLDA can sometimes be sensitive to parameters
+result <- tryCatch({
+  allda(X, y, ncomp = 2, k = 7, r = 2, var_retained = 0.99)
+}, error = function(e) {
+  warning("ALLDA failed with error: ", e$message)
+  NULL
+})
+
+if (!is.null(result)) {
+  print(summary(result))
+  # W_final <- result$W # or coefficients(result)
+  # S_final <- result$S # Access custom slots if needed
+  # scores <- scores(result)
+  # plot(scores, col = as.factor(y), main = "ALLDA Projection")
+}
+
 }
 \references{
-Nie, F., Wang, Z., Wang, R., Wang, Z., & Li, X. (2020). Adaptive local linear discriminant analysis.
+Nie, F., Wang, Z., Wang, R., Wang, Z., & Li, X. (2020).
+Adaptive local linear discriminant analysis.
 ACM Transactions on Knowledge Discovery from Data (TKDD), 14(1), 1-19.
+\doi{10.1145/3369870}.
 }

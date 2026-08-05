@@ -2,21 +2,23 @@
 % Please edit documentation in R/scatter.R
 \name{pairwise_within_scatter}
 \alias{pairwise_within_scatter}
-\title{Calculate Pairwise Within-Class and Between-Class Scatter for Class Pairs}
+\title{Calculate scatter matrices for every pair of classes}
 \usage{
 pairwise_within_scatter(X, labels)
 }
 \arguments{
-\item{X}{A numeric matrix (n x d).}
+\item{X}{A numeric matrix with samples in rows and features in columns.}
 
-\item{labels}{A factor or numeric vector of length n representing class labels.}
+\item{labels}{An atomic vector or factor of class labels with length \code{nrow(X)}.}
 }
 \value{
-A list of length equal to the number of class pairs, where each element is
-a list with \code{w} (within-class) and \code{b} (between-class) scatter matrices.
+A list with one element per unordered class pair. Each element
+contains \code{w}, the pooled within-class scatter, and \code{b}, the binary
+between-class scatter.
 }
 \description{
-For each pair of classes in the dataset, this function computes the within-class
-and between-class scatter matrices restricted to those two classes.
+Computes within-class and between-class scatter for each unordered class
+pair. Class means and within-class scatters are cached once, so observations
+are not rescanned for every pair.
 }
 \keyword{internal}

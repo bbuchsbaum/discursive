@@ -4,50 +4,72 @@
 \alias{olda}
 \title{Orthogonal Linear Discriminant Analysis}
 \usage{
-olda(X, Y, preproc = pass())
+olda(X, Y, preproc = center(), mu = 0, tol = 1e-06, ncomp = NULL)
 }
 \arguments{
-\item{X}{A numeric matrix where columns represent features and rows represent samples.}
+\item{X}{Numeric matrix or data frame with samples in rows and features in
+columns.}
 
-\item{Y}{A factor or numeric vector representing class labels for each sample.}
+\item{Y}{Class labels with length equal to \code{nrow(X)}.}
 
-\item{preproc}{A preprocessing function (from \code{multivarious}) to apply to the data.
-Default is \code{pass()} (no preprocessing).}
+\item{preproc}{A fitted or unfitted preprocessing specification from
+\pkg{multivarious}. The default centers the predictors.}
+
+\item{mu}{Nonnegative compatibility parameter passed to \code{\link[=ulda]{ulda()}}. The ULDA
+SVD solution is independent of this value.}
+
+\item{tol}{Relative numerical-rank tolerance in \verb{(0, 1)}, passed to \code{\link[=ulda]{ulda()}}.}
+
+\item{ncomp}{Optional positive integer giving the number of discriminant
+components. The default, \code{NULL}, uses the numerical between-class rank.}
 }
 \value{
-A \code{discriminant_projector} object containing:
-\itemize{
-\item \code{v}    : The orthogonal loadings (projection matrix).
-\item \code{s}    : The projected scores.
-\item \code{sdev} : Standard deviations of the score dimensions.
-\item \code{labels}: The class labels.
-\item \code{preproc}: The preprocessing object.
+A \code{\link[multivarious:discriminant_projector]{multivarious::discriminant_projector()}} with class \code{"olda"}.
+In addition to the standard projector fields, it contains:
+\describe{
+\item{qr_R}{The upper-triangular factor relating the returned OLDA
+basis to the pivoted ULDA basis.}
+\item{ulda_pivot}{The ULDA component permutation used by the pivoted QR
+decomposition.}
+\item{ulda_eigenvalues}{The generalized eigenvalues of the source ULDA
+solution, in their original discriminant order.}
+\item{ncomp}{The number of returned components.}
+\item{total_rank}{The numerical rank of the total scatter matrix.}
+\item{tol}{The relative rank tolerance used by the fit.}
+\item{mu}{The compatibility value supplied to \code{mu}.}
 }
 }
 \description{
-This function performs Orthogonal Linear Discriminant Analysis (OLDA) on a given dataset.
-OLDA finds orthogonal linear discriminants that maximize the separation between classes.
-It is useful for dimensionality reduction and classification tasks.
+Fits the orthogonal linear discriminant analysis (OLDA) solution of Ye
+(2005). OLDA returns an orthonormal basis for the discriminant subspace
+found by uncorrelated linear discriminant analysis (ULDA).
 }
 \details{
-The function proceeds through the following steps:
-\enumerate{
-\item \strong{ULDA Projection}: The data is first projected using Uncorrelated Linear Discriminant Analysis (ULDA).
-\item \strong{QR Decomposition}: The projection matrix from ULDA is then orthogonalized using QR decomposition.
-\item \strong{Final Projection}: The orthogonalized projection matrix is applied to the (preprocessed) data,
-and a \code{discriminant_projector} object is returned.
-}
+If \eqn{G_U} is the ULDA basis, OLDA computes a column-pivoted QR
+decomposition
+\deqn{G_U P = Q R}
+and returns \eqn{Q}. Thus \eqn{Q^T Q = I}, while \eqn{Q} spans the same
+discriminant subspace as \eqn{G_U}. This is Algorithm 2 of Ye (2005).
+
+Unlike ULDA, OLDA guarantees Euclidean orthogonality of the loading vectors;
+it does not generally make the score columns uncorrelated. The QR pivot and
+triangular factor are retained so the transformation from the source ULDA
+basis is auditable. Training scores are obtained from the existing ULDA
+scores with a triangular solve, avoiding a second preprocessing and matrix
+multiplication pass.
 }
 \examples{
-\dontrun{
-data(iris)
 X <- as.matrix(iris[, 1:4])
-Y <- iris[, 5]
-res <- olda(X, Y)
-print(res)
+fit <- olda(X, iris$Species, ncomp = 2)
+crossprod(coef(fit))
+multivarious::project(fit, X[1:5, , drop = FALSE])
 }
-
+\references{
+Ye, J. (2005). Characterization of a Family of Algorithms for Generalized
+Discriminant Analysis on Undersampled Problems. \emph{Journal of Machine Learning
+Research}, 6, 483--502.
 }
 \seealso{
-\code{\link{ulda}}, \code{\link{qr}}, \code{\link{qr.Q}}, \code{\link[multivarious]{discriminant_projector}}
+\code{\link[=ulda]{ulda()}}, \code{\link[=fastolda]{fastolda()}},
+\code{\link[multivarious:discriminant_projector]{multivarious::discriminant_projector()}}
 }

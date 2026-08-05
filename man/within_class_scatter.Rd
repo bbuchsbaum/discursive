@@ -2,19 +2,20 @@
 % Please edit documentation in R/scatter.R
 \name{within_class_scatter}
 \alias{within_class_scatter}
-\title{Calculate Within-Class Scatter Matrix (via C++)}
+\title{Calculate within-class scatter}
 \usage{
 within_class_scatter(X, Y)
 }
 \arguments{
-\item{X}{A numeric matrix (n x d).}
+\item{X}{A numeric matrix with samples in rows and features in columns.}
 
-\item{Y}{A factor or numeric vector of length n.}
+\item{Y}{An atomic vector or factor of class labels with length \code{nrow(X)}.}
 }
 \value{
-A numeric (d x d) within-class scatter matrix.
+A numeric feature-by-feature within-class scatter matrix.
 }
 \description{
-Computes the within-class scatter matrix using a C++ function \code{withinSScpp}.
+Computes the unnormalized within-class scatter after centering observations
+by their class means.
 }
 \keyword{internal}

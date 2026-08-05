@@ -16,47 +16,46 @@ shrinkage_da(
 )
 }
 \arguments{
-\item{X}{A numeric matrix of size \code{n \times d} (samples by features).}
+\item{X}{A numeric matrix of size \code{n} by \code{d} (samples by features).}
 
 \item{Y}{A factor or numeric vector of length \code{n} representing class labels.
 If numeric, it will be converted to a factor.}
 
-\item{preproc}{A pre-processing function or object from \pkg{multivarious}
-(e.g. \code{\link[multivarious]{center}}, \code{\link[multivarious]{scale}}),
-applied to \code{X} before shrinkage DA. Defaults to \code{\link[multivarious]{center}}.}
+\item{preproc}{A pre-processing function or object (from multivarious) applied to \code{X} before shrinkage DA. Defaults to \code{center()}.}
 
-\item{lambda}{Regularization parameter for the \code{\link[corpcor]{sda}} function
-(shrinkage of the discriminant directions). Typically in \eqn{[0, 1]}.}
+\item{lambda}{Optional correlation shrinkage intensity in \verb{[0, 1]}. If
+omitted, \code{\link[sda:sda]{sda::sda()}} estimates it.}
 
 \item{lambda.var}{Regularization parameter for the variance (covariance) terms,
-passed to \code{\link[corpcor]{sda}}.}
+passed to \code{\link[sda:sda]{sda::sda()}}. If omitted, it is estimated.}
 
 \item{lambda.freqs}{Regularization parameter for class frequency shrinkage,
-passed to \code{\link[corpcor]{sda}}.}
+passed to \code{\link[sda:sda]{sda::sda()}}. If omitted, it is estimated.}
 
 \item{diagonal}{Logical, if \code{TRUE}, the method restricts the covariance matrix
 to be diagonal. Defaults to \code{FALSE}.}
 
-\item{verbose}{Logical, if \code{TRUE}, prints progress messages from \code{\link[corpcor]{sda}}.
+\item{verbose}{Logical, if \code{TRUE}, prints progress messages from \code{\link[sda]{sda}}.
 Defaults to \code{FALSE}.}
 }
 \value{
-A \code{\link[multivarious]{discriminant_projector}} object (subclass \code{"shrinkda"}) containing:
+A \code{\link[multivarious]{discriminant_projector}} object with
+classes \code{"shrinkage_da"} and \code{"shrinkda"}, containing:
 \itemize{
-\item \code{v} : A \code{d \times m} matrix of discriminant directions
+\item \code{v} : A \code{d} by \code{m} matrix of discriminant directions
 (\code{ret\$beta} transposed).
-\item \code{s} : An \code{n \times m} matrix of projected scores (the original data
-in the shrinkage discriminant space).
+\item \code{s} : An \code{n} by \code{m} matrix of intercept-adjusted discriminant
+scores for the training data.
 \item \code{sdev} : Standard deviations of each column in \code{s}.
 \item \code{labels} : The class labels (in character form).
-\item \code{alpha} : Intercept or offset term from \code{\link[corpcor]{sda}} result (if any).
+\item \code{alpha} : Intercept or offset term from \code{\link[sda]{sda}} result (if any).
 \item \code{preproc} : The pre-processing object used.
-\item \code{classes} : Includes the string \code{"shrinkda"}.
+\item \code{classes} : Includes \code{"shrinkage_da"} and \code{"shrinkda"}.
 }
 }
 \description{
 This function provides a shrinkage-based discriminant analysis using the
-\code{\link[corpcor]{sda}} routine from the \pkg{corpcor} package.
+\code{\link[sda]{sda}} routine from the \pkg{sda} package.
 The method can regularize (\emph{shrink}) the discriminant directions for
 high-dimensional data, potentially improving robustness and reducing overfitting.
 }
@@ -64,7 +63,7 @@ high-dimensional data, potentially improving robustness and reducing overfitting
 Internally, the function:
 \enumerate{
 \item Preprocesses \code{X} using \code{preproc}.
-\item Calls \code{\link[corpcor]{sda}} with the specified \code{lambda}, \code{lambda.var}, \code{lambda.freqs}, etc.
+\item Calls \code{\link[sda]{sda}} with the specified \code{lambda}, \code{lambda.var}, \code{lambda.freqs}, etc.
 \item Extracts \code{ret\$beta} (the discriminant directions) and \code{ret\$alpha} (the intercept).
 \item Projects the preprocessed data to obtain the score matrix \code{s}.
 \item Constructs a \code{discriminant_projector} object with class \code{"shrinkda"}.
@@ -89,5 +88,5 @@ print(res)
 }
 }
 \seealso{
-\code{\link[corpcor]{sda}}, \code{\link[multivarious]{discriminant_projector}}
+\code{\link[sda]{sda}}, \code{\link[multivarious]{discriminant_projector}}
 }

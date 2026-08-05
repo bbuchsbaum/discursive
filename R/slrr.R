@@ -1,173 +1,240 @@
-#' Sparse or Ridge Low-Rank Regression (SLRR / LRRR)
+#' Sparse or Ridge Low-Rank Regression
 #'
-#' Implements the low-rank regression approach from Cai, Ding & Huang (2013).
-#' Unifies:
-#' \itemize{
-#'   \item **Low-Rank Ridge Regression (LRRR)** (`penalty = "ridge"`) — adds a
-#'   Frobenius-norm penalty.
-#'   \item **Sparse Low-Rank Regression (SLRR)** (`penalty = "l21"`) — uses an
-#'   `l_{2,1}` row-sparsity penalty via iterative reweighting.
-#' }
+#' Fits the low-rank ridge regression (LRRR) or sparse low-rank regression
+#' (SLRR) models of Cai et al. (2013). Both models regress a normalized class
+#' indicator matrix on a low-dimensional discriminant subspace. The sparse
+#' variant uses iterative reweighting to impose a row-wise \eqn{\ell_{2,1}}
+#' penalty on the coefficient matrix.
 #'
-#' @param X A numeric matrix `n x d`.
-#' @param y A factor or numeric vector of length `n`. If numeric, it is
-#'   coerced to a factor.
-#' @param ncomp Integer. Rank (subspace dimension) of the low-rank coefficient
-#'   matrix `W`. Must be at most `K - 1` (where `K` is the number of classes)
-#'   and at most `d`.
-#' @param lambda Numeric penalty parameter. Default `0.001`.
-#' @param penalty Either `"ridge"` (LRRR) or `"l21"` (SLRR).
-#' @param max_iter Maximum number of iterations for `"l21"`. Ignored for
-#'   `"ridge"`.
-#' @param tol Convergence tolerance for `"l21"`.
-#' @param preproc Preprocessing from `multivarious`. Defaults to
-#'   [multivarious::center()].
-#' @param verbose Logical. Print iteration details for `"l21"`.
-#' @param st_ridge Small ridge added to `S_t` to avoid singularity (default
-#'   `1e-6`).
+#' @param X Numeric matrix with samples in rows and features in columns.
+#' @param Y Class labels with length equal to `nrow(X)`.
+#' @param s Positive integer rank. It cannot exceed `ncol(X)` or the number of
+#'   classes minus one.
+#' @param lambda Nonnegative regularization parameter.
+#' @param penalty Either `"ridge"` for LRRR or `"l21"` for SLRR.
+#' @param max_iter Positive integer giving the maximum number of SLRR updates.
+#' @param tol Positive relative convergence tolerance for SLRR.
+#' @param preproc A fitted or unfitted preprocessing specification from
+#'   \pkg{multivarious}. The default centers the predictors, as required by
+#'   the regression formulation.
+#' @param verbose Logical; report the SLRR objective after every iteration.
 #'
-#' @return A `discriminant_projector` (subclass `"slrr"`) with additional
-#'   fields `A` (subspace) and `B` (in-subspace regression).
+#' @return A [multivarious::discriminant_projector()] with classes `"slrr"`
+#'   and the selected penalty. In addition to the standard projector fields it
+#'   contains:
+#'   \describe{
+#'     \item{A}{The `ncol(X)` by `s` discriminant basis.}
+#'     \item{B}{The `s` by `nlevels(Y)` regression coefficient matrix.}
+#'     \item{eigenvalues}{Generalized eigenvalues associated with `A`.}
+#'     \item{objective_history}{The ridge objective, or the SLRR objective at
+#'       every reweighting iteration.}
+#'     \item{iterations}{Number of optimization steps performed.}
+#'     \item{converged}{Whether the relative SLRR stopping rule was met.}
+#'   }
+#'
+#' @details
+#' The normalized class indicator is `1 / sqrt(n_j)` for observations in class
+#' `j`. For LRRR, `A` contains the leading generalized eigenvectors of
+#' \eqn{S_b A = (S_t + \lambda I) A \Lambda}. For SLRR, the identity is
+#' replaced at every iteration by the diagonal reweighting matrix whose entries
+#' are \eqn{1 / (2 ||w_i||_2)}.
+#'
+#' The generalized eigenproblem is solved through a symmetric whitening
+#' transformation. This avoids treating the generally nonsymmetric product
+#' \eqn{(S_t + \lambda D)^{-1} S_b} as a symmetric matrix and also supports
+#' semidefinite denominator matrices when their numerical rank is sufficient.
 #'
 #' @references
-#' Cai, X., Ding, C., & Huang, H. (2013). "On The Equivalent of Low-Rank
-#' Regressions and Linear Discriminant Analysis Based Regressions." *KDD'13*.
+#' Cai, X., Ding, C., Nie, F., and Huang, H. (2013). On the Equivalent of
+#' Low-rank Linear Regressions and Linear Discriminant Analysis Based
+#' Regressions. *Proceedings of KDD '13*, 1124--1132.
+#'
+#' @examples
+#' X <- as.matrix(iris[, 1:4])
+#' Y <- iris$Species
+#' fit_lrrr <- slrr(X, Y, s = 2, lambda = 0.01, penalty = "ridge")
+#' fit_slrr <- slrr(X, Y, s = 2, lambda = 0.01, penalty = "l21")
 #'
 #' @export
-#' @examples
-#' \dontrun{
-#' data(iris)
-#' X <- as.matrix(iris[, 1:4])
-#' y <- iris[, 5]
-#' fit_lrrr <- slrr(X, y, ncomp = 2, lambda = 0.01, penalty = "ridge")
-#' fit_slrr <- slrr(X, y, ncomp = 2, lambda = 0.01, penalty = "l21")
-#' }
-slrr <- function(X, y, ncomp,
+slrr <- function(X,
+                 Y,
+                 s,
                  lambda = 0.001,
                  penalty = c("ridge", "l21"),
                  max_iter = 50,
                  tol = 1e-6,
-                 preproc = multivarious::center(),
-                 verbose = FALSE,
-                 st_ridge = 1e-6) {
-
-  cl <- match.call()
+                 preproc = center(),
+                 verbose = FALSE) {
   penalty <- match.arg(penalty)
-  s <- ncomp
+  X <- as.matrix(X)
 
-  procres <- multivarious::prep(preproc)
-  Xp <- init_transform(procres, X)
-  n <- nrow(Xp)
+  if (!is.numeric(X) || length(dim(X)) != 2L || nrow(X) < 2L || ncol(X) < 1L) {
+    stop("'X' must be a numeric matrix with at least two rows and one column.")
+  }
+  if (any(!is.finite(X))) {
+    stop("'X' must contain only finite values.")
+  }
+  if (length(Y) != nrow(X) || anyNA(Y)) {
+    stop("'Y' must contain one non-missing label per row of 'X'.")
+  }
+
+  Y <- droplevels(as.factor(Y))
+  n_classes <- nlevels(Y)
+  if (n_classes < 2L) {
+    stop("'Y' must contain at least two classes.")
+  }
+
+  max_rank <- min(ncol(X), n_classes - 1L)
+  s <- .check_whole_number(s, "s", lower = 1L, upper = max_rank)
+  lambda <- .check_finite_scalar(lambda, "lambda", lower = 0)
+  max_iter <- .check_whole_number(max_iter, "max_iter", lower = 1L)
+  tol <- .check_finite_scalar(tol, "tol", lower = 0, lower_open = TRUE)
+  if (!is.logical(verbose) || length(verbose) != 1L || is.na(verbose)) {
+    stop("'verbose' must be TRUE or FALSE.")
+  }
+
+  procres <- multivarious::fit(preproc, X)
+  Xp <- as.matrix(multivarious::transform(procres, X))
+  if (!is.numeric(Xp) || any(dim(Xp) != dim(X)) || any(!is.finite(Xp))) {
+    stop("'preproc' must produce a finite numeric matrix with the same dimensions as 'X'.")
+  }
+
+  # Cai et al. define Y_ij = 1 / sqrt(n_j) for members of class j.
+  G <- stats::model.matrix(~ Y - 1)
+  G <- sweep(G, 2L, sqrt(colSums(G)), FUN = "/")
+
+  XtX <- crossprod(Xp)
+  XtG <- crossprod(Xp, G)
+  Sb <- tcrossprod(XtG)
   d <- ncol(Xp)
 
-  y <- as.factor(y)
-  G <- model.matrix(~ y - 1)
-  G <- sweep(G, 2, colSums(G), FUN = "/")
-  cdim <- ncol(G)
+  solve_step <- function(d_weights) {
+    regularized_scatter <- XtX
+    diag(regularized_scatter) <- diag(regularized_scatter) + lambda * d_weights
 
-  if (cdim < 2) {
-    stop("y must contain at least two classes")
+    eig <- .symmetric_generalized_eigen(
+      numerator = Sb,
+      denominator = regularized_scatter,
+      ncomp = s
+    )
+    A <- eig$vectors
+    lhs <- crossprod(A, regularized_scatter %*% A)
+    rhs <- crossprod(A, XtG)
+    B <- solve(lhs, rhs)
+    W <- A %*% B
+
+    list(
+      A = A,
+      B = B,
+      W = W,
+      eigenvalues = eig$values,
+      regularized_scatter = regularized_scatter
+    )
   }
-
-  max_s <- min(cdim - 1, d)
-  if (s < 1 || s > max_s) {
-    stop(sprintf("'ncomp' must be between 1 and %d", max_s))
-  }
-
-  Xt  <- t(Xp)
-  XtX <- Xt %*% Xp
-
-  mu <- colMeans(Xp)
-  St <- total_scatter(Xp, mu)
-  Sb <- between_class_scatter(Xp, y)
-
-  St_reg <- St + st_ridge * diag(d)
-  M <- tryCatch(solve(St_reg, Sb),
-                error = function(e) MASS::ginv(St_reg) %*% Sb)
-  eigres <- eigen(M, symmetric = TRUE)
-  A <- eigres$vectors[, seq_len(s), drop = FALSE]
-
-  get_ABW <- function(A_in, D_in) {
-    reg_mat  <- XtX + lambda * D_in
-    left_mat <- t(A_in) %*% reg_mat %*% A_in
-    left_inv <- tryCatch(solve(left_mat),
-                         error = function(e) MASS::ginv(left_mat))
-    B_in <- left_inv %*% (t(A_in) %*% Xt %*% G)
-    W_in <- A_in %*% B_in
-    list(A = A_in, B = B_in, W = W_in)
-  }
-
-  Dmat <- diag(d)
 
   if (penalty == "ridge") {
-    outABW <- get_ABW(A, Dmat)
-    W <- outABW$W
-    B <- outABW$B
+    solution <- solve_step(rep(1, d))
+    residual <- G - Xp %*% solution$W
+    objective_history <- sum(residual^2) + lambda * sum(solution$W^2)
+    iterations <- 1L
+    converged <- TRUE
   } else {
-    old_obj <- Inf
-    W <- matrix(0, d, cdim)
+    d_weights <- rep(1, d)
+    objective_history <- numeric(max_iter)
+    converged <- FALSE
 
     for (iter in seq_len(max_iter)) {
-      St_iter <- St + lambda * Dmat + st_ridge * diag(d)
-      M_l21 <- tryCatch(solve(St_iter, Sb),
-                        error = function(e) MASS::ginv(St_iter) %*% Sb)
-      eig_l21 <- eigen(M_l21, symmetric = TRUE)
-      A_new <- eig_l21$vectors[, seq_len(s), drop = FALSE]
-
-      reg_mat  <- XtX + lambda * Dmat
-      left_mat <- t(A_new) %*% reg_mat %*% A_new
-      left_inv <- tryCatch(solve(left_mat),
-                           error = function(e) MASS::ginv(left_mat))
-      B_new <- left_inv %*% (t(A_new) %*% Xt %*% G)
-      W_new <- A_new %*% B_new
-
-      row_norms <- sqrt(rowSums(W_new^2)) + 1e-12
-      D_diag    <- 1 / (2 * row_norms)
-      Dmat_new  <- diag(D_diag, d)
-
-      s_mat_l21 <- Xp %*% W_new
-      R    <- G - s_mat_l21
-      fval1 <- sum(R^2)
-      fval2 <- lambda * sum(row_norms)
-      new_obj <- fval1 + fval2
+      solution <- solve_step(d_weights)
+      row_norms <- sqrt(rowSums(solution$W^2))
+      residual <- G - Xp %*% solution$W
+      objective_history[iter] <- sum(residual^2) + lambda * sum(row_norms)
 
       if (verbose) {
-        message(sprintf("Iter=%d, obj=%.6f (fval=%.6f + pen=%.6f)",
-                        iter, new_obj, fval1, fval2))
+        message(sprintf("Iter=%d, objective=%.10g", iter, objective_history[iter]))
       }
 
-      if (abs(old_obj - new_obj) < tol * (1 + abs(old_obj))) {
-        A    <- A_new
-        W    <- W_new
-        B    <- B_new
-        Dmat <- Dmat_new
-        break
+      if (iter > 1L) {
+        change <- abs(objective_history[iter] - objective_history[iter - 1L])
+        scale <- 1 + abs(objective_history[iter - 1L])
+        if (change <= tol * scale) {
+          converged <- TRUE
+          break
+        }
       }
 
-      A    <- A_new
-      W    <- W_new
-      B    <- B_new
-      Dmat <- Dmat_new
-      old_obj <- new_obj
-
-      if (iter == max_iter && verbose) {
-        message("Max iterations reached in slrr l21 approach.")
-      }
+      d_weights <- 1 / (2 * pmax(row_norms, sqrt(.Machine$double.eps)))
     }
+
+    iterations <- iter
+    objective_history <- objective_history[seq_len(iterations)]
   }
 
-  s_mat <- Xp %*% W
-
+  scores <- Xp %*% solution$W
   multivarious::discriminant_projector(
-    v       = W,
-    s       = s_mat,
-    sdev    = apply(s_mat, 2, sd),
+    v = solution$W,
+    s = scores,
+    sdev = apply(scores, 2L, stats::sd),
     preproc = procres,
-    labels  = y,
-    A       = A,
-    B       = B,
-    method  = "slrr",
-    call    = cl,
-    classes = c("slrr", penalty)
+    labels = Y,
+    classes = c("slrr", penalty),
+    A = solution$A,
+    B = solution$B,
+    eigenvalues = solution$eigenvalues,
+    objective_history = objective_history,
+    iterations = iterations,
+    converged = converged
   )
+}
+
+.symmetric_generalized_eigen <- function(numerator, denominator, ncomp) {
+  numerator <- 0.5 * (numerator + t(numerator))
+  denominator <- 0.5 * (denominator + t(denominator))
+
+  denominator_eig <- eigen(denominator, symmetric = TRUE)
+  spectral_scale <- max(1, max(abs(denominator_eig$values)))
+  keep <- denominator_eig$values > sqrt(.Machine$double.eps) * spectral_scale
+  if (sum(keep) < ncomp) {
+    stop("The regularized scatter matrix has insufficient numerical rank for 's'.")
+  }
+
+  whitening <- sweep(
+    denominator_eig$vectors[, keep, drop = FALSE],
+    2L,
+    sqrt(denominator_eig$values[keep]),
+    FUN = "/"
+  )
+  reduced <- crossprod(whitening, numerator %*% whitening)
+  reduced <- 0.5 * (reduced + t(reduced))
+  reduced_eig <- eigen(reduced, symmetric = TRUE)
+  take <- seq_len(ncomp)
+
+  list(
+    values = reduced_eig$values[take],
+    vectors = whitening %*% reduced_eig$vectors[, take, drop = FALSE]
+  )
+}
+
+.check_finite_scalar <- function(x, name, lower = -Inf, upper = Inf,
+                                 lower_open = FALSE, upper_open = FALSE) {
+  if (!is.numeric(x) || length(x) != 1L || !is.finite(x)) {
+    stop(sprintf("'%s' must be a finite numeric scalar.", name))
+  }
+  lower_bad <- if (lower_open) x <= lower else x < lower
+  upper_bad <- if (upper_open) x >= upper else x > upper
+  if (lower_bad || upper_bad) {
+    interval <- paste0(
+      if (lower_open) "(" else "[", lower, ", ", upper,
+      if (upper_open) ")" else "]"
+    )
+    stop(sprintf("'%s' must lie in %s.", name, interval))
+  }
+  as.numeric(x)
+}
+
+.check_whole_number <- function(x, name, lower = -Inf, upper = Inf) {
+  x <- .check_finite_scalar(x, name, lower = lower, upper = upper)
+  if (x != floor(x)) {
+    stop(sprintf("'%s' must be an integer.", name))
+  }
+  as.integer(x)
 }

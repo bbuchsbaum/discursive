@@ -1,64 +1,126 @@
-#' generalized eigenvalue decomposition
-#' 
-#' compute generalized eigenvalues and eigenvectors using one of two methods
-#' 
-#' @param A the left hand side matrix
-#' @param B the right hand side matrix
-#' @param ncomp number of components to return
-#' @param ordering the ordering of the eigenvalues/vectors (LM = largest magnitude first, SM = smallest magnitude first)
-#' @param method robust or lapack (using `geigen` package)
-#' 
-#' @return `geneig` instance whcih is a subclass of `projector` with added slot for eigenvalues called `values`
+#' Symmetric Generalized Eigenvalue Decomposition
+#'
+#' Solves \eqn{A v = \lambda B v} for symmetric `A` and positive-semidefinite
+#' `B`, returning the algebraically largest eigenpairs in the positive
+#' numerical range of `B`.
+#'
+#' @param A Symmetric finite numeric left-hand-side matrix.
+#' @param B Symmetric finite positive-semidefinite right-hand-side matrix.
+#' @param ncomp Positive integer number of eigenpairs, not exceeding the
+#'   positive numerical rank of `B`.
+#' @param method `"robust"` or its compatibility alias `"sdiag"` uses an
+#'   explicit symmetric whitening solve. `"lapack"` uses [geigen::geigen()]
+#'   and requires positive-definite `B`.
+#' @param tol Relative tolerance in `(0, 1)` used to determine the positive
+#'   numerical rank of `B`.
+#'
+#' @return A [multivarious::projector()] with class `"geneig"`, coefficients
+#'   in `v`, generalized eigenvalues in `values`, and rank/method diagnostics.
+#'
+#' @details
+#' The robust path diagonalizes `B`, restricts the problem to its positive
+#' eigenspace, and solves the symmetric whitened problem. The returned vectors
+#' satisfy \eqn{V^T B V = I} and are ordered by algebraic eigenvalue, largest
+#' first. This avoids applying a symmetric eigensolver to the generally
+#' nonsymmetric product `solve(B, A)`.
+#'
 #' @export
-#' @examples 
-#' 
-#' A <- matrix(c(14, 10, 12,
-#'               10, 12, 13,
-#'               12, 13, 14), nrow=3, byrow=TRUE)
-
-#' B <- matrix(c(48, 17, 26,
-#'               17, 33, 32,
-#'               26, 32, 34), nrow=3, byrow=TRUE)
-#'               
-#' @importFrom Matrix isDiagonal            
-geneig <- function(A, B, ncomp=2, method=c("robust", "sdiag", "lapack")) {
+#'
+#' @examples
+#' A <- matrix(c(5, 1, 1, 2), 2)
+#' B <- diag(c(1, 2))
+#' fit <- geneig(A, B, ncomp = 2)
+#' crossprod(fit$v, B %*% fit$v)
+geneig <- function(A,
+                   B,
+                   ncomp = 2,
+                   method = c("robust", "sdiag", "lapack"),
+                   tol = 1e-8) {
   method <- match.arg(method)
-  #which <- match.arg(ordering)
-  
-  ret <- if (method == "robust") {
-    if (isDiagonal(B)) {
-      Sinv <- Matrix::Diagonal(1/sqrt(diag(B)))
-      W <- Matrix::Diagonal(x=Sinv) %*% A  %*% Matrix::Diagonal(x=Sinv)
-    } else {
-      decomp <- eigen(B)
-      S <- decomp$values
-      U <- decomp$vectors
-      S[S < 1e-8] = Inf
-      Sinv = 1 /sqrt(S)
-      W = Matrix::Diagonal(x=Sinv) %*% crossprod(U, (A %*% U)) %*% Matrix::Diagonal(x=Sinv)
-    }
-    
-    decomp2 = RSpectra::eigs(W, k=ncomp)
-    
-    vecs <- if (!isDiagonal(B)) {
-      U %*% Matrix::Diagonal(x=Sinv) %*% decomp2$vectors
-    } else {
-      decomp2$vectors
-    }
-    list(vectors = vecs, values=decomp2$values)
-  } else if (method == "sdiag") {
-    B_decomp <- eigen(B)
-    Bp <- B_decomp$vectors %*% diag(1/sqrt(B_decomp$values))
-    Ap <- t(Bp) %*% A %*% Bp
-    A_decomp <- RSpectra::eigs(Ap, k=ncomp)
-    vecs <- Bp %*% A_decomp$vectors
-    list(vectors=vecs, values=A_decomp$values)
-  } else {
-    res <- geigen(as.matrix(A),as.matrix(B))
-    vec <- res$vectors[, nrow(res$vectors):(nrow(res$vectors)-(ncomp-1)),drop=FALSE]
-    list(vectors=vec, values=rev(res$values)[1:ncomp])
+  A <- as.matrix(A)
+  B <- as.matrix(B)
+  if (!is.numeric(A) || !is.numeric(B)) {
+    stop("'A' and 'B' must be numeric matrices.")
   }
-  
-  projector(v=ret$vectors, classes="geneig", ordering=ordering, values=ret$values)
-  
+  if (nrow(A) != ncol(A) || nrow(B) != ncol(B) || any(dim(A) != dim(B))) {
+    stop("'A' and 'B' must be square matrices with the same dimensions.")
+  }
+  if (any(!is.finite(A)) || any(!is.finite(B))) {
+    stop("'A' and 'B' must contain only finite values.")
+  }
+  if (!isSymmetric(A) || !isSymmetric(B)) {
+    stop("'A' and 'B' must be symmetric.")
+  }
+  tol <- .check_finite_scalar(
+    tol, "tol", lower = 0, upper = 1,
+    lower_open = TRUE, upper_open = TRUE
+  )
+
+  B_decomp <- eigen(B, symmetric = TRUE)
+  B_scale <- max(abs(B_decomp$values))
+  if (!is.finite(B_scale) || B_scale == 0) {
+    stop("'B' must have positive numerical rank.")
+  }
+  if (min(B_decomp$values) < -tol * B_scale) {
+    stop("'B' must be positive semidefinite.")
+  }
+  keep <- B_decomp$values > tol * B_scale
+  rank_B <- sum(keep)
+  if (rank_B == 0L) {
+    stop("'B' must have positive numerical rank.")
+  }
+  ncomp <- .check_whole_number(ncomp, "ncomp", lower = 1L, upper = rank_B)
+
+  if (method == "lapack") {
+    if (rank_B < nrow(B)) {
+      stop("method = 'lapack' requires positive-definite 'B'.")
+    }
+    if (!requireNamespace("geigen", quietly = TRUE)) {
+      stop("method = 'lapack' requires the 'geigen' package.")
+    }
+    result <- geigen::geigen(A, B, symmetric = TRUE)
+    values <- as.numeric(result$values)
+    vectors <- as.matrix(result$vectors)
+    ordering <- order(values, decreasing = TRUE)
+    take <- ordering[seq_len(ncomp)]
+    values <- values[take]
+    vectors <- vectors[, take, drop = FALSE]
+    norms <- sqrt(colSums(vectors * (B %*% vectors)))
+    vectors <- sweep(vectors, 2L, norms, FUN = "/")
+  } else {
+    positive_vectors <- B_decomp$vectors[, keep, drop = FALSE]
+    positive_values <- B_decomp$values[keep]
+    whitener <- sweep(
+      positive_vectors, 2L, sqrt(positive_values), FUN = "/"
+    )
+    whitened_A <- crossprod(whitener, A %*% whitener)
+    whitened_A <- 0.5 * (whitened_A + t(whitened_A))
+    A_decomp <- eigen(whitened_A, symmetric = TRUE)
+    values <- A_decomp$values[seq_len(ncomp)]
+    vectors <- whitener %*%
+      A_decomp$vectors[, seq_len(ncomp), drop = FALSE]
+  }
+
+  signs <- vapply(seq_len(ncomp), function(j) {
+    sign(vectors[which.max(abs(vectors[, j])), j])
+  }, numeric(1L))
+  signs[signs == 0] <- 1
+  vectors <- sweep(vectors, 2L, signs, FUN = "*")
+  component_names <- paste0("GE", seq_len(ncomp))
+  rownames(vectors) <- rownames(A)
+  colnames(vectors) <- component_names
+  names(values) <- component_names
+
+  preproc_obj <- multivarious::fit(
+    multivarious::pass(), matrix(0, nrow = 1L, ncol = nrow(A))
+  )
+  multivarious::projector(
+    v = vectors,
+    preproc = preproc_obj,
+    classes = "geneig",
+    values = values,
+    rank_B = rank_B,
+    method = method,
+    tol = tol
+  )
 }

@@ -2,39 +2,55 @@
 % Please edit documentation in R/fast_olda.R
 \name{fastolda}
 \alias{fastolda}
-\title{Fast Orthogonal LDA}
+\title{Fast Orthogonal Linear Discriminant Analysis}
 \usage{
-fastolda(X, Y, preproc = center(), reg = 0.01)
+fastolda(X, Y, preproc = center(), reg = 0.01, tol = 1e-06, ncomp = NULL)
 }
 \arguments{
-\item{X}{A \code{matrix} (n x d) with n samples and d features.}
+\item{X}{Numeric matrix or data frame with observations in rows and features
+in columns.}
 
-\item{Y}{A \code{factor} with length n, providing the class/group label for each sample.}
+\item{Y}{Class labels with length equal to \code{nrow(X)}.}
 
-\item{preproc}{A pre-processing step, such as \code{center()}, from \code{multivarious}. Default is \code{center()}.}
+\item{preproc}{A fitted or unfitted preprocessing specification from the
+multivarious package. The default centers the predictors.}
 
-\item{reg}{A \code{numeric} regularization parameter (default = 0.01). This is used to ensure invertibility of certain matrices.}
+\item{reg}{Nonnegative relative ridge applied to the total-scatter spectrum.
+\code{reg = 0} gives the unregularized Ye (2005) OLDA subspace. Positive values
+replace \eqn{\sigma_j^2} by
+\eqn{\sigma_j^2 + \mathrm{reg}\,\sigma_1^2} before whitening.}
+
+\item{tol}{Relative numerical-rank tolerance in \verb{(0, 1)}.}
+
+\item{ncomp}{Optional positive integer number of components. The default
+uses the numerical between-class rank.}
 }
 \value{
-A \code{discriminant_projector} object containing:
-\itemize{
-\item \code{rotation}: The matrix of loadings (d x r) where r is the reduced dimension.
-\item \code{s}: The scores matrix (n x r), i.e., \code{X \%*\% rotation}.
-\item \code{sdev}: Standard deviations of the scores.
-\item \code{labels}: The class labels.
-\item \code{preproc}: The preprocessing object.
-}
+A \code{\link[multivarious:discriminant_projector]{multivarious::discriminant_projector()}} with class
+\code{"fast_olda"}. Additional fields report the eigenvalues, numerical ranks,
+effective ridge, and the direct algorithm used.
 }
 \description{
-Perform a fast Orthogonal Linear Discriminant Analysis (OLDA) based on provided data and class labels.
+Computes the OLDA basis directly from compact singular-value decompositions
+of the total-scatter factor and the whitened class-centroid matrix. Unlike
+\code{\link[=olda]{olda()}}, this fused implementation does not construct an intermediate ULDA
+projector and does not delegate to either \code{ulda()} or \code{olda()}.
 }
 \details{
-This function performs OLDA by pre-processing the data, computing difference-based scatter matrices, and then solving for a discriminant projection.
-The final result is returned as a \code{discriminant_projector} object from the \code{multivarious} package.
+The implementation fuses steps 1--5 of Ye's ULDA algorithm with the final
+QR decomposition in the OLDA algorithm. For \code{reg = 0}, its returned basis
+spans the same subspace as \code{\link[=olda]{olda()}} up to an arbitrary orthogonal rotation.
 }
 \examples{
-data(iris)
 X <- as.matrix(iris[, 1:4])
-Y <- iris[, 5]
-res <- fastolda(X, Y)
+fit <- fastolda(X, iris$Species, reg = 0, ncomp = 2)
+crossprod(coef(fit))
+}
+\references{
+Ye, J. (2005). Characterization of a Family of Algorithms for Generalized
+Discriminant Analysis on Undersampled Problems. \emph{Journal of Machine Learning
+Research}, 6, 483--502.
+}
+\seealso{
+\code{\link[=olda]{olda()}}, \code{\link[=ulda]{ulda()}}
 }

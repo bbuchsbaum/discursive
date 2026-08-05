@@ -2,34 +2,44 @@
 % Please edit documentation in R/geneig.R
 \name{geneig}
 \alias{geneig}
-\title{generalized eigenvalue decomposition}
+\title{Symmetric Generalized Eigenvalue Decomposition}
 \usage{
-geneig(A, B, ncomp = 2, method = c("robust", "sdiag", "lapack"))
+geneig(A, B, ncomp = 2, method = c("robust", "sdiag", "lapack"), tol = 1e-08)
 }
 \arguments{
-\item{A}{the left hand side matrix}
+\item{A}{Symmetric finite numeric left-hand-side matrix.}
 
-\item{B}{the right hand side matrix}
+\item{B}{Symmetric finite positive-semidefinite right-hand-side matrix.}
 
-\item{ncomp}{number of components to return}
+\item{ncomp}{Positive integer number of eigenpairs, not exceeding the
+positive numerical rank of \code{B}.}
 
-\item{method}{robust or lapack (using \code{geigen} package)}
+\item{method}{\code{"robust"} or its compatibility alias \code{"sdiag"} uses an
+explicit symmetric whitening solve. \code{"lapack"} uses \code{\link[geigen:geigen]{geigen::geigen()}}
+and requires positive-definite \code{B}.}
 
-\item{ordering}{the ordering of the eigenvalues/vectors (LM = largest magnitude first, SM = smallest magnitude first)}
+\item{tol}{Relative tolerance in \verb{(0, 1)} used to determine the positive
+numerical rank of \code{B}.}
 }
 \value{
-\code{geneig} instance whcih is a subclass of \code{projector} with added slot for eigenvalues called \code{values}
+A \code{\link[multivarious:projector]{multivarious::projector()}} with class \code{"geneig"}, coefficients
+in \code{v}, generalized eigenvalues in \code{values}, and rank/method diagnostics.
 }
 \description{
-compute generalized eigenvalues and eigenvectors using one of two methods
+Solves \eqn{A v = \lambda B v} for symmetric \code{A} and positive-semidefinite
+\code{B}, returning the algebraically largest eigenpairs in the positive
+numerical range of \code{B}.
+}
+\details{
+The robust path diagonalizes \code{B}, restricts the problem to its positive
+eigenspace, and solves the symmetric whitened problem. The returned vectors
+satisfy \eqn{V^T B V = I} and are ordered by algebraic eigenvalue, largest
+first. This avoids applying a symmetric eigensolver to the generally
+nonsymmetric product \code{solve(B, A)}.
 }
 \examples{
-
-A <- matrix(c(14, 10, 12,
-              10, 12, 13,
-              12, 13, 14), nrow=3, byrow=TRUE)
-B <- matrix(c(48, 17, 26,
-              17, 33, 32,
-              26, 32, 34), nrow=3, byrow=TRUE)
-              
+A <- matrix(c(5, 1, 1, 2), 2)
+B <- diag(c(1, 2))
+fit <- geneig(A, B, ncomp = 2)
+crossprod(fit$v, B \%*\% fit$v)
 }

@@ -2,59 +2,100 @@
 % Please edit documentation in R/gmmsd.R
 \name{gmmsd}
 \alias{gmmsd}
-\title{Generalized Multiple Maximum Scatter Difference (GMMSD)}
+\title{Generalized Multiple Maximum Scatter Difference}
 \usage{
-gmmsd(X, y, c = 1, dim = 2, preproc = multivarious::center())
+gmmsd(
+  X,
+  y,
+  c = 1,
+  dim = 2,
+  preproc = multivarious::center(),
+  tol = 1e-08,
+  ncomp = NULL
+)
 }
 \arguments{
-\item{X}{A numeric matrix (n x d), where n is the number of samples (rows) and d
-is the number of features (columns).}
+\item{X}{Numeric matrix or data frame with samples in rows and features in
+columns.}
 
-\item{y}{A factor or numeric vector of length n representing class labels for each sample.
-If numeric, it will be internally converted to a factor.}
+\item{y}{Class labels with length equal to \code{nrow(X)}.}
 
-\item{c}{A numeric balance parameter scaling the within-class scatter matrix.
-Typically a positive value. Default is 1.}
+\item{c}{Finite nonnegative scalar multiplying the within-class scatter.
+Larger values penalize within-class variation more strongly.}
 
-\item{dim}{The number of dimensions (features) to retain in the transformed feature space.}
+\item{dim}{Positive integer giving the number of projection dimensions.
+It cannot exceed the numerical rank of the centered, preprocessed data.}
 
-\item{preproc}{A \code{pre_processor} object from \pkg{multivarious}
-(e.g. \code{center()}, \code{scale()}). Defaults to \code{center()}.}
+\item{preproc}{A fitted or unfitted preprocessing specification from
+\pkg{multivarious}. The default centers the predictors.}
+
+\item{tol}{Relative QR rank tolerance in \code{(0, 1)}. A diagonal direction
+is retained when its absolute pivoted-QR diagonal exceeds \code{tol} times
+the largest absolute diagonal.}
+
+\item{ncomp}{Optional compatibility alias for \code{dim}. Supplying both
+arguments is an error unless they have the same value.}
 }
 \value{
-A \code{discriminant_projector} object (subclass can be \code{"gmmsd"}) containing:
-\itemize{
-\item \code{v}    : A \code{d x dim} loading/projection matrix.
-\item \code{s}    : An \code{n x dim} score matrix (the data projected onto the new axes).
-\item \code{sdev} : Standard deviations of each dimension in \code{s}.
-\item \code{labels}: The class labels.
-\item \code{preproc}: The preprocessing object used.
+A \code{\link[multivarious:discriminant_projector]{multivarious::discriminant_projector()}} with class \code{"gmmsd"}.
+In addition to the standard projector fields, it contains:
+\describe{
+\item{eigenvalues}{Scatter-difference eigenvalues for the returned
+directions.}
+\item{criterion_eigenvalues}{The complete reduced criterion spectrum.}
+\item{dim}{The fitted projection dimension.}
+\item{optimization_rank}{Numerical rank of the internally centered,
+preprocessed data.}
+\item{qr_diagonal, rank_threshold}{Absolute pivoted-QR diagonals and the
+threshold used to select the numerical row space after global scale
+normalization.}
+\item{c, tol}{The fitted balance parameter and rank tolerance.}
+\item{data_scale}{Global scale removed for the numerical solve. Returned
+eigenvalues are restored to the original preprocessed-data units.}
+\item{criterion_scale_normalized}{Largest absolute entry of the reduced
+scatter-difference matrix in normalized coordinates.}
+\item{criterion_center}{The center removed only while estimating the
+GMMSD directions. Scores continue to follow \code{preproc}.}
 }
 }
 \description{
-This function implements the GMMSD method for feature extraction. It solves a
-symmetric generalized eigenvalue problem to find a projection that maximizes the
-difference between the between-class scatter and a scaled within-class scatter.
-The method uses a QR decomposition to enhance computational efficiency, making it
-suitable for high-dimensional data. The preprocessing object must come from the
-\pkg{multivarious} package.
+Fits the generalized multiple maximum scatter difference (GMMSD) feature
+extractor. GMMSD maximizes a between-minus-within scatter criterion in the
+numerical row space of the centered, preprocessed data.
+}
+\details{
+Let \eqn{S_b} and \eqn{S_w} denote the unnormalized between-class and
+within-class scatter matrices of the preprocessed data. If \eqn{Q} is an
+orthonormal basis for its numerical centered row space, GMMSD solves
+\deqn{\max_{U^T U=I} \operatorname{tr}
+      \{U^T Q^T(S_b-cS_w)QU\}}
+and returns \eqn{V=QU}. Thus the returned loadings are Euclidean orthonormal
+and satisfy the scatter-difference eigenproblem in the retained row space.
+
+The implementation never constructs feature-by-feature scatter matrices.
+Class scatters are formed after projection into the at-most
+\code{min(nrow(X) - 1, ncol(X))} dimensional QR space. This preserves the
+purpose of the QR formulation for high-dimensional data and excludes
+arbitrary numerical-null directions.
+
+Directions are estimated after an internal centering step even when
+\code{preproc} does not center. This makes the fitted subspace translation
+invariant. Training and future scores are still computed from data
+transformed only by \code{preproc}, so an explicit
+\code{\link[multivarious:pass]{multivarious::pass()}} preserves the requested score origin.
 }
 \examples{
-\dontrun{
-library(multivarious)
-
-data(iris)
-X <- as.matrix(iris[, -5])
-y <- iris$Species
-
-# By default, this will center the data prior to GMMSD
-dp <- gmmsd(X, y, c = 1, dim = 2)
-
-# Inspect the projector
-print(dp)
-
-# Project the original data
-scores <- dp$s
-# or equivalently, project(dp, X)
+X <- as.matrix(iris[, 1:4])
+fit <- gmmsd(X, iris$Species, c = 1, dim = 2)
+multivarious::project(fit, X[1:5, , drop = FALSE])
 }
+\references{
+Zheng, N., Qi, L., and Guan, L. (2014). Generalized multiple maximum scatter
+difference feature extraction using QR decomposition. \emph{Journal of Visual
+Communication and Image Representation}, 25(6), 1460--1471.
+\doi{10.1016/j.jvcir.2014.04.009}
+}
+\seealso{
+\code{\link[=between_class_scatter]{between_class_scatter()}}, \code{\link[=within_class_scatter]{within_class_scatter()}},
+\code{\link[multivarious:discriminant_projector]{multivarious::discriminant_projector()}}
 }

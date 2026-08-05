@@ -4,22 +4,37 @@
 \alias{update_similarity}
 \title{Update Similarity Matrix S}
 \usage{
-update_similarity(X, W, k, r, epsilon = 1e-10)
+update_similarity(X, W, y, k, r, epsilon = 1e-10)
 }
 \arguments{
-\item{X}{Data matrix of size n x d (n samples, d features).}
+\item{X}{Data matrix of size n x d (n samples, d features), typically PCA-reduced.}
 
 \item{W}{Transformation matrix (d x ncomp).}
 
-\item{k}{Number of neighbors.}
+\item{y}{Label vector of length n. Neighbor search is restricted to points in
+the same class.}
 
-\item{r}{Parameter r controlling the influence of distances (should be > 1).}
+\item{k}{Number of neighbors (integer).}
 
-\item{epsilon}{Small constant to avoid division by zero (default is 1e-10).}
+\item{r}{Parameter controlling the influence of distances (numeric, must be > 1).
+Larger \code{r} gives more equal weights to neighbors.}
+
+\item{epsilon}{Relative threshold used to identify effectively duplicate
+neighbors within each row (default is 1e-10). It is not added to distances,
+so the result is invariant to global changes of measurement units.}
 }
 \value{
-Updated similarity matrix S (n x n).
+Updated similarity matrix S (n x n) as a sparse \code{Matrix}
+(at most k non-zeros per row; positive-distance neighbors receive zero
+limiting weight when duplicate neighbors are present).
 }
 \description{
-Update the similarity matrix S using the optimal subspace projection W.
+Updates the similarity matrix S based on the current projection W.
+For each point \code{i}, it finds the \code{k} nearest neighbors \code{j} in the transformed
+space \code{X \%*\% W}, restricted to same-class neighbors. The similarity \code{S_ij}
+is calculated based on the squared distances
+\code{d_ij} in this space using the formula:
+\verb{S_ij = d_ij^(1/(1-r)) / sum_\{l in KNN(i)\} d_il^(1/(1-r))} if \code{j} is a neighbor of \code{i},
+and \code{S_ij = 0} otherwise.
 }
+\keyword{internal}

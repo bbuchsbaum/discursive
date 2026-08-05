@@ -2,10 +2,10 @@
 # Generator token: 10BE3573-1514-4C36-9D1C-5A225CD40393
 
 withinSScpp <- function(X, group) {
-    .Call('_discursive_withinSScpp', PACKAGE = 'discursive', X, group)
+    .Call(`_discursive_withinSScpp`, X, group)
 }
 
 betweenSScpp <- function(X, group) {
-    .Call('_discursive_betweenSScpp', PACKAGE = 'discursive', X, group)
+    .Call(`_discursive_betweenSScpp`, X, group)
 }
 

@@ -7,29 +7,14 @@
 weighted_group_means(X, F)
 }
 \arguments{
-\item{X}{A numeric matrix of shape \code{n x d}, where \code{n} is the number of samples (rows)
-and \code{d} is the number of features (columns).}
+\item{X}{Numeric matrix with observations in rows and features in columns.}
 
-\item{F}{A numeric matrix of shape \code{c x n}, where \code{c} is the number of classes
-and \code{n} is the number of samples. \code{F[i, j]} is the weight of sample \code{j}
-for class \code{i}, and each row must have a positive sum of weights.}
+\item{F}{Nonnegative class-by-observation weight matrix. Every row must
+have positive mass.}
 }
 \value{
-A numeric matrix of shape \code{c x d}, where each row is the weighted mean of \code{X}
-for one class.
+A class-by-feature matrix of weighted means.
 }
 \description{
-Given a data matrix \code{X} (size \code{n x d}) and a class-weight matrix \code{F} (size \code{c x n}),
-this function computes the weighted means of \code{X} for each class.
-Unlike hard (0/1) assignments, each sample contributes partially to each class's mean
-according to its weight.
-}
-\examples{
-# Suppose we have 5 samples (rows), 2 features (cols),
-# and 3 classes. F has shape (3 x 5).
-X <- matrix(1:10, nrow=5, ncol=2)
-F <- matrix(runif(3*5, min=0, max=1), nrow=3)
-# Ensure each row of F sums to something > 0
-res_means <- weighted_group_means(X, F)
-
+Computes one feature mean per row of a class-by-observation weight matrix.
 }

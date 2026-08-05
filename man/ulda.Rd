@@ -2,65 +2,74 @@
 % Please edit documentation in R/ulda.R
 \name{ulda}
 \alias{ulda}
-\title{Uncorrelated Linear Discriminant Analysis (ULDA)}
+\title{Uncorrelated Linear Discriminant Analysis}
 \usage{
-ulda(X, Y, preproc = center(), mu = 0, tol = 1e-06)
+ulda(X, Y, preproc = center(), mu = 0, tol = 1e-06, ncomp = NULL)
 }
 \arguments{
-\item{X}{A numeric matrix of size \code{n x d}, where \code{n} is the number of samples (rows)
-and \code{d} is the number of features (columns).}
+\item{X}{Numeric matrix or data frame with samples in rows and features in
+columns.}
 
-\item{Y}{A factor or numeric vector of length \code{n} representing class labels for each sample.
-If numeric, it will be converted to a factor.}
+\item{Y}{Class labels with length equal to \code{nrow(X)}.}
 
-\item{preproc}{A preprocessing function from the \code{multivarious} package, such as \code{center()} or \code{scale()},
-to apply to the data before ULDA. The default is \code{center()}, which centers the columns of \code{X}.}
+\item{preproc}{A fitted or unfitted preprocessing specification from
+\pkg{multivarious}. The default centers the predictors.}
 
-\item{mu}{A regularization parameter (currently unused, but included for extensibility). Default is 0.}
+\item{mu}{Nonnegative compatibility parameter. The SVD solution is
+independent of \code{mu}, so this value is validated and stored but does not
+alter the fitted projection.}
 
-\item{tol}{A numeric tolerance level. Singular values smaller than \code{tol} are considered negligible and discarded.
-Default is \code{1e-6}.}
+\item{tol}{Relative numerical-rank tolerance in \verb{(0, 1)}. A singular value
+is retained when it is greater than \code{tol} times the largest singular value
+of the same matrix.}
+
+\item{ncomp}{Optional positive integer giving the number of discriminant
+components. The default, \code{NULL}, returns the numerical rank of the
+between-class scatter, which is at most the number of classes minus one.}
 }
 \value{
-An object of class \code{discriminant_projector} from \code{multivarious}, which contains:
-\itemize{
-\item \code{rotation}: The final projection matrix mapping the original feature space to the ULDA space.
-\item \code{s}: The scores (projected data) of size \code{n x r}, where \code{r} is the reduced dimension.
-\item \code{sdev}: The standard deviations of the projected components.
-\item \code{labels}: The class labels.
-\item \code{preproc}: The preprocessing object used.
-\item \code{classes}: A string "ulda" indicating the type of projector.
+A \code{\link[multivarious:discriminant_projector]{multivarious::discriminant_projector()}} with class \code{"ulda"}.
+In addition to the standard projector fields, it contains:
+\describe{
+\item{eigenvalues}{The generalized eigenvalues associated with the
+returned discriminant directions.}
+\item{ncomp}{The number of returned components.}
+\item{total_rank}{The numerical rank of the total scatter matrix.}
+\item{tol}{The relative rank tolerance used by the fit.}
+\item{mu}{The validated compatibility value supplied to \code{mu}.}
 }
 }
 \description{
-This function performs Uncorrelated Linear Discriminant Analysis (ULDA) on a given dataset.
-ULDA seeks linear combinations of features that provide maximum class separation while ensuring
-that the resulting discriminant axes are mutually uncorrelated. It is particularly useful for
-dimensionality reduction and classification tasks in high-dimensional spaces.
+Fits the SVD-based uncorrelated linear discriminant analysis (ULDA)
+solution of Ye (2005). The returned discriminant scores are mutually
+uncorrelated with respect to the empirical total scatter matrix.
 }
 \details{
-The procedure for ULDA can be summarized as follows:
-\enumerate{
-\item \strong{Preprocessing}: The data \code{X} is preprocessed using the specified \code{preproc} function.
-\item \strong{Class Statistics}: Compute class probabilities, class means, and the global mean of the preprocessed data.
-\item \strong{Between-Class Scatter}: Form a matrix \code{Hb} that captures between-class differences weighted by class probabilities.
-\item \strong{Total Scatter}: Form the total scatter matrix via the centered data \code{Ht}.
-\item \strong{SVD of Total Scatter}: Perform Singular Value Decomposition (SVD) on \code{Ht} to capture the most significant directions of variability.
-\item \strong{Projection onto Between-Class Structure}: Use SVD on a transformed version of \code{Hb} to find directions that maximize class separation.
-\item \strong{Final Projection}: Combine the transformations to yield a projection matrix whose columns are discriminant vectors that are uncorrelated.
-\item \strong{Projection of Data}: Project the preprocessed data onto these discriminant vectors to get the final scores.
-}
+Let \eqn{S_t} and \eqn{S_b} denote the total and between-class scatter
+matrices, each normalized by the sample size. ULDA computes a basis \eqn{G}
+that simultaneously diagonalizes the scatter matrices and satisfies
+\deqn{G^T S_t G = I.}
+Consequently, the fitted score columns are uncorrelated. The implementation
+follows Algorithm 1 of Ye (2005): it whitens a reduced SVD of the centered
+data matrix and then rotates that basis using an SVD of the whitened class
+centroids. Only left singular vectors are computed because right singular
+vectors are not needed.
 
-This approach ensures that the resulting discriminants are uncorrelated linear combinations of features.
+\code{mu} is retained for compatibility with the previous function signature.
+The cited derivation shows that the optimal ULDA transformation is
+independent of this parameter; it is not a ridge penalty in this
+implementation.
 }
 \examples{
-\dontrun{
-data(iris)
 X <- as.matrix(iris[, 1:4])
-Y <- iris[, 5]
-res <- ulda(X, Y)
+fit <- ulda(X, iris$Species, ncomp = 2)
+multivarious::project(fit, X[1:5, , drop = FALSE])
 }
+\references{
+Ye, J. (2005). Characterization of a Family of Algorithms for Generalized
+Discriminant Analysis on Undersampled Problems. \emph{Journal of Machine Learning
+Research}, 6, 483--502.
 }
 \seealso{
-\code{\link[multivarious]{prep}}, \code{\link[RSpectra]{eigs_sym}}, \code{\link[multivarious]{discriminant_projector}}
+\code{\link[=olda]{olda()}}, \code{\link[multivarious:discriminant_projector]{multivarious::discriminant_projector()}}
 }

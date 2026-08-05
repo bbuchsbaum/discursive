@@ -13,8 +13,10 @@ dgpage_fit(
   beta = 1e-05,
   maxiter = 20,
   tol = 1e-05,
-  verbose = TRUE,
-  seed = NULL
+  verbose = FALSE,
+  seed = NULL,
+  ridge = 1e-08,
+  rank_tol = NULL
 )
 }
 \arguments{
@@ -27,25 +29,48 @@ dgpage_fit(
 
 \item{r}{Target dimension (number of embedding directions to learn).}
 
-\item{alpha}{The hyper-parameter in Eq. (12). Typical range: \eqn{[1e-6, 1e-1]}.}
+\item{alpha}{A strictly positive hyper-parameter in Eq. (12). Typical range:
+\eqn{[1e-6, 1e-1]}. Strict positivity, together with a sufficiently ranked
+diversity graph, makes the adaptive-graph subproblem bounded.}
 
-\item{beta}{The hyper-parameter in Eq. (12). Typical range: \eqn{[1e-6, 1e-1]}.}
+\item{beta}{The hyper-parameter in Eq. (12). Typical range: \eqn{[1e-6, 1e-1]}.
+\code{beta} must be non-negative and \code{alpha + beta < 1}.}
 
-\item{maxiter}{Maximum number of iterations for the alternating updates.}
+\item{maxiter}{Maximum number of iterations for the alternating updates (>= 1).}
 
-\item{tol}{Convergence tolerance on the objective value.}
+\item{tol}{Convergence tolerance on the relative change of the objective value.}
 
-\item{verbose}{Whether to print progress information.}
-\item{seed}{Optional integer seed controlling the random initialization.}
+\item{verbose}{Whether to print progress information (via \code{message}).}
+
+\item{seed}{Optional integer seed for the random initialization of \eqn{P}.
+When supplied, the caller's RNG state is saved and restored, so the global
+random stream is unaffected. When \code{NULL} (default), the current RNG
+stream is used (and advanced) as usual.}
+
+\item{ridge}{Relative ridge added to the row-space total-scatter matrix before
+the generalized eigen-solve, as \code{ridge * mean(diag(N))}. Default
+\code{1e-8}. No absolute ridge is added, preserving unit equivariance.}
+
+\item{rank_tol}{Optional relative singular-value threshold used to determine
+the numerical row-space rank of \code{X}. The default is
+\code{max(dim(X)) * .Machine$double.eps}.}
 }
 \value{
 A list with:
 \itemize{
-\item \code{P}: the \eqn{d \times r} projection matrix,
+\item \code{P}: the \eqn{d \times effective_r} projection matrix mapped
+back from the numerical row space,
 \item \code{W}: the \eqn{n \times n} learned adjacency matrix (adaptive graph),
 \item \code{objective}: the final objective value,
+\item \code{obj_trace}: the objective value after each iteration,
 \item \code{iter}: number of iterations taken,
-\item \code{Z}: stored internally (\eqn{d x n}) = \code{t(X)} (just for reference).
+\item \code{converged}: whether the relative objective change fell below \code{tol},
+\item \code{final_rel_change}: relative change at the last iteration,
+\item \code{requested_r}, \code{effective_r}, and \code{optimization_rank}:
+dimension/rank diagnostics,
+\item \code{ridge} and \code{ridge_effective}: the requested multiplier and
+effective ridge in normalized row-space coordinates,
+\item \code{Z}: original training data as \code{t(X)}, retained for prediction.
 }
 }
 \description{
@@ -56,7 +81,8 @@ Eq. (12) in an alternating fashion.
 \details{
 \strong{Steps}:
 \enumerate{
-\item Initialize \eqn{P} randomly (size \eqn{d \times r}).
+\item Compute the numerical row space of \code{X} and initialize \eqn{P}
+randomly under the generalized orthonormality constraint.
 \item For each iteration:
 \itemize{
 \item Update \eqn{W} via Eq. (18) (closed-form).
@@ -64,6 +90,15 @@ Eq. (12) in an alternating fashion.
 }
 \item Repeat until convergence or \code{maxiter} is reached.
 }
+
+Both alternating steps minimize the same objective
+\deqn{
+  F(P, W) = \|P^\top Z - P^\top Z W\|_F^2 + \alpha \|D W\|_F^2
+          + \beta \sum_{ij} w_{ij} \|P^\top z_i - P^\top z_j\|^2
+          + (1-\alpha-\beta) \sum_{ij} s_{ij} \|P^\top z_i - P^\top z_j\|^2,
+}
+so the objective is non-increasing across iterations (after the first
+P-update); this is checked by the unit tests.
 
 \strong{Dimensions} (in internal notation):
 \itemize{

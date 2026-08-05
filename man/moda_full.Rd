@@ -2,7 +2,7 @@
 % Please edit documentation in R/moda.R
 \name{moda_full}
 \alias{moda_full}
-\title{Multimodal Oriented Discriminant Analysis (MODA) - Complete & Faithful Implementation}
+\title{Experimental Multimodal Oriented Discriminant Analysis}
 \usage{
 moda_full(
   X,
@@ -17,13 +17,17 @@ moda_full(
   B_init = "random",
   verbose = FALSE,
   lineSearchIter = 20,
-  B_init_sd = 0.01
+  B_init_sd = 0.01,
+  preproc = center(),
+  seed = NULL
 )
 }
 \arguments{
-\item{X}{A numeric matrix of size \eqn{d \times n}, where each column is a data sample.}
+\item{X}{A numeric matrix or data frame with observations in rows and
+features in columns, consistent with the other estimators in this package.}
 
-\item{y}{A vector (length \eqn{n}) of integer or factor class labels (must have \(\geq 2\) distinct labels).}
+\item{y}{A vector with one non-missing class label per row of \code{X} and at
+least two distinct classes.}
 
 \item{k}{Integer. Dimensionality of the target subspace (number of features to extract).}
 
@@ -39,39 +43,48 @@ moda_full(
 
 \item{clusterMethod}{Either \code{"kmeans"} or a custom function accepting (dataMatrix, kC) -> clusterIDs.}
 
-\item{B_init}{Either \code{"random"} or \code{"pca"} to initialize the projection matrix \(\mathbf{B}\).}
+\item{B_init}{Either \code{"random"} or \code{"pca"} to initialize the projection
+matrix \eqn{\mathbf{B}}.}
 
 \item{verbose}{If TRUE, prints iteration progress.}
 
 \item{lineSearchIter}{Number of line search iterations for step size selection (default = 20).}
 
-\item{B_init_sd}{Standard deviation for the random initialization of \(\mathbf{B}\) if \code{B_init="random"}. Defaults to 1e-2.}
+\item{B_init_sd}{Standard deviation for the random initialization of
+\eqn{\mathbf{B}} if \code{B_init="random"}. Defaults to 1e-2.}
+
+\item{preproc}{A fitted or unfitted preprocessing specification from
+\pkg{multivarious}. The default centers the predictors.}
+
+\item{seed}{Optional nonnegative integer. When supplied, all stochastic
+clustering and initialization are run under a local seed and the caller's
+random-number state is restored on exit. With \code{NULL}, the caller's stream
+is used normally.}
 }
 \value{
-A list with elements:
-\itemize{
-\item \code{B}: A \eqn{d' \times k} matrix (or \eqn{d \times k} if no PCA) with the learned projection.
-\item \code{objVals}: The values of the objective \eqn{G(\mathbf{B})} at each iteration.
-\item \code{clusters}: The cluster assignments (per class).
-\item \code{pcaInfo}: If PCA was applied, contains the PCA rotation \code{U} and mean.
-}
+A \code{\link[multivarious:discriminant_projector]{multivarious::discriminant_projector()}} with classes \code{"moda"}
+and \code{"moda_full"}. In addition to the standard projector fields, it
+contains \code{B} (an alias of the loadings), the accepted \code{objective_history},
+\code{iterations}, \code{converged}, cluster assignments and fitted cluster models,
+PCA metadata, and initialization metadata.
 }
 \description{
-Implements the full Multimodal Oriented Discriminant Analysis (MODA) framework as
-derived in De la Torre & Kanade (2005). This code:
+Fits an experimental solver for the Multimodal Oriented Discriminant Analysis
+(MODA) objective of De la Torre and Kanade (2005). The implementation:
 \enumerate{
 \item \strong{Clusters each class} into one or more clusters to capture multimodal structure.
 \item \strong{Approximates each cluster's covariance} as \eqn{U_i \Lambda_i U_i^T + \sigma_i^2 I}
 to handle high-dimensional data (Section 6 of the paper).
 \item \strong{Constructs the majorization function} \eqn{L(\mathbf{B})} that upper-bounds
 the Kullback–Leibler divergence-based objective \eqn{G(\mathbf{B})} (Equations (7)-(8)).
-\item \strong{Iterates} using the gradient-based solution to minimize \eqn{E_5(\mathbf{B})}
-(Equation (10)) with updates from Equation (11) (i.e., normalized gradient descent
-or line search).
+\item \strong{Iterates} along an Equation (11)-inspired direction, accepting a step
+only when the directly evaluated MODA objective decreases.
 }
 
-It \strong{does not} merely provide a starter approach; instead, it faithfully implements
-the steps described in the paper, including references to Equations (7)–(11).
+This is not claimed to reproduce the paper's complete implementation: the
+default clustering is k-means rather than multi-way normalized cuts, and the
+step size is selected by backtracking on the MODA objective rather than the
+paper's closed-form majorization step.
 }
 \details{
 \strong{Key Steps}:
@@ -79,10 +92,11 @@ the steps described in the paper, including references to Equations (7)–(11).
 \item \strong{Clustering} (Section 4): For each class, optionally split the samples into
 multiple clusters to model multimodality.
 \item \strong{Approximate Covariances} (Section 6): For each cluster, approximate
-\(\Sigma_i\) by \(\mathbf{U}_i \boldsymbol{\Lambda}_i \mathbf{U}_i^T + \sigma_i^2 \mathbf{I}\).
+\eqn{\Sigma_i} by \eqn{\mathbf{U}_i \boldsymbol{\Lambda}_i
+   \mathbf{U}_i^T + \sigma_i^2 \mathbf{I}}.
 \item \strong{Majorization} (Sections 5.1–5.2): Build \eqn{L(\mathbf{B})} from \eqn{G(\mathbf{B})}
 using Equation (7) and sum up to get Equation (8).
-\item \strong{Iterative Minimization} of \eqn{L(\mathbf{B})} \(\geq G(\mathbf{B})\). The partial
+\item \strong{Iterative Minimization} of \eqn{L(\mathbf{B}) \geq G(\mathbf{B})}. The partial
 derivatives (Equation (9)) yield a system of linear equations, solved here by
 gradient-based updates (Equations (10)–(11)).
 }
@@ -117,9 +131,10 @@ to minimize \eqn{E_5}.
 # Synthetic example (small scale):
 set.seed(123)
 d <- 20; n <- 40
-X <- matrix(rnorm(d*n), nrow = d, ncol = n)
+X <- matrix(rnorm(d*n), nrow = n, ncol = d)
 y <- rep(1:2, each = n/2)
-res <- moda_full(X, y, k = 2, numClusters = 1, pcaFirst = FALSE, maxIter = 15, verbose = TRUE)
+res <- moda_full(X, y, k = 2, numClusters = 1, pcaFirst = FALSE,
+                 B_init = "pca", maxIter = 15)
 
 # Inspect the learned projection B
 str(res)

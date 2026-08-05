@@ -2,49 +2,80 @@
 % Please edit documentation in R/soft_lda.R
 \name{soft_lda}
 \alias{soft_lda}
-\title{Soft-Label Linear Discriminant Analysis (SL-LDA)}
+\title{Soft-Label Linear Discriminant Projection}
 \usage{
 soft_lda(
   X,
-  y,
-  ncomp = ncol(y) - 1,
-  dp = min(dim(X)),
-  di = dp - 1,
+  C,
+  preproc = pass(),
+  dp = NULL,
+  di = NULL,
+  dl = NULL,
   alpha = 0,
-  preproc = multivarious::pass()
+  tol = 1e-06
 )
 }
 \arguments{
-\item{X}{A numeric matrix \verb{n x d}.}
+\item{X}{Numeric matrix or data frame with observations in rows and features
+in columns.}
 
-\item{y}{A numeric matrix \verb{n x c} of soft class memberships (\code{y[i, k]} is
-the weight of sample \code{i} for class \code{k}). Must be non-negative. This was
-called \code{C} in earlier versions.}
+\item{C}{Numeric membership matrix with one row per observation and at least
+two class columns. Entries must be nonnegative; every row and column must
+have positive mass.}
 
-\item{ncomp}{Integer. Final between-class projection dimension. Defaults
-to \code{ncol(y) - 1}. Equivalent to \code{dl} in earlier versions.}
+\item{preproc}{A fitted or unfitted preprocessing specification from the
+multivarious package. The default performs no preprocessing.}
 
-\item{dp}{Integer. PCA dimension. Defaults to \code{min(dim(X))}.}
+\item{dp}{Optional positive integer number of numerical principal components
+to retain. The default uses all available nonzero components.}
 
-\item{di}{Integer. Within-class subspace dimension. Defaults to \code{dp - 1}.}
+\item{di}{Optional positive integer number of within-class modes used for
+whitening. The default uses the positive numerical rank.}
 
-\item{alpha}{Numeric (\verb{>= 0}) ridge added to the soft within-class scatter
-for invertibility. Default \code{0}.}
+\item{dl}{Optional positive integer number of discriminant components. The
+default is limited by the positive between-class rank and \code{ncol(C) - 1}.}
 
-\item{preproc}{Preprocessing from \code{multivarious}. Defaults to
-\code{\link[multivarious:pass]{multivarious::pass()}} (no centering).}
+\item{alpha}{Nonnegative ridge added to the within-class scatter.}
+
+\item{tol}{Relative numerical-rank tolerance in \verb{(0, 1)}.}
 }
 \value{
-A \code{discriminant_projector} (subclass \code{"soft_lda"}).
+A \code{\link[multivarious:discriminant_projector]{multivarious::discriminant_projector()}} with class \code{"soft_lda"}.
+It includes the complete \code{memberships}, selected \code{eigenvalues} and
+\code{within_eigenvalues}, PCA diagnostics, soft scatter matrices, and the
+dimensions \code{dp}, \code{di}, and \code{dl}.
 }
 \description{
-A soft-label variant of LDA following Zhao et al. (2014). Instead of hard
-(0/1) labels each sample carries fractional memberships across classes,
-encoded in a matrix \code{y} (also called \code{C}).
+Fits the SL-LDA projection of Zhao et al. (2014) from nonnegative soft
+class memberships. The estimator is distinct from \code{\link[=em_soft_lda]{em_soft_lda()}}, which
+fits a Gaussian evidential-EM classifier.
+}
+\details{
+Let \eqn{F=C^T}, \eqn{E=\mathrm{diag}(C\mathbf{1})}, and
+\eqn{G=\mathrm{diag}(C^T\mathbf{1})}. In the PCA score space, this
+implementation forms
+\deqn{S_w = X^T(E-F^T G^{-1}F)X}
+and
+\deqn{S_b = X^T(F^T G^{-1}F -
+E\mathbf{1}\mathbf{1}^T E / \mathbf{1}^T E\mathbf{1})X.}
+
+The eigenvalue-selection convention is part of the contract: \code{di} retains
+the largest strictly positive eigenvalues of \eqn{S_w+\alpha I}, then
+whitens those modes. It does not select the smallest eigenvalues or implement
+null-space LDA. The final directions are the largest positive generalized
+eigenmodes of \eqn{S_b} relative to the retained within-class subspace.
+}
+\examples{
+X <- as.matrix(iris[, 1:4])
+C <- model.matrix(~ iris$Species - 1)
+fit <- soft_lda(X, C, dl = 2)
+multivarious::project(fit, X[1:5, , drop = FALSE])
 }
 \references{
-Zhao, M., Zhang, Z., Chow, T.W.S., & Li, B. (2014).
-"A general soft label based Linear Discriminant Analysis for
-semi-supervised dimensionality reduction." \emph{Neurocomputing}, 135,
-250–264.
+Zhao, M., Zhang, Z., Chow, T. W. S., and Li, B. (2014). A general soft
+label based Linear Discriminant Analysis for semi-supervised dimension
+reduction. \emph{Neural Networks}, 55, 83--97.
+}
+\seealso{
+\code{\link[=em_soft_lda]{em_soft_lda()}}, \code{\link[=pca_lda]{pca_lda()}}
 }

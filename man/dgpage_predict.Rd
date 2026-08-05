@@ -2,38 +2,37 @@
 % Please edit documentation in R/dpage.R
 \name{dgpage_predict}
 \alias{dgpage_predict}
-\title{Predict labels using a trained DGPAGE model via 1-NN classification}
+\title{Predict labels using a trained DGPAGE model via k-NN classification}
 \usage{
 dgpage_predict(model, Xtest, k = 1, method = "euclidean")
 }
 \arguments{
-\item{model}{The list returned by \code{\link{dgpage_fit}}.
-Must also contain \code{ytrain} (the vector of training labels) and \code{Ytrain}
-(the \eqn{n x r} embedding of training data), which you can store yourself.}
+\item{model}{The list returned by \code{\link{dgpage_fit}}, augmented with
+\code{ytrain} (the vector of training labels). The training embedding is
+derived from \code{model$P} and \code{model$Z}, so nothing else needs to
+be stored.}
 
 \item{Xtest}{A numeric matrix of size \eqn{m \times d} (test data).}
 
-\item{k}{Number of neighbors (default 1).}
+\item{k}{Number of neighbors (default 1). For \code{k > 1} a majority vote
+is taken, with ties broken by factor level order.}
 
 \item{method}{Distance method for \code{\link[Rnanoflann]{nn}}. Default "euclidean".}
 }
 \value{
-A vector of length \eqn{m} with predicted labels.
+A factor of length \eqn{m} with predicted labels.
 }
 \description{
-After you have fit the DGPAGE model to some labeled training data \code{Xtrain}, you can
-project \code{Xtrain} and store their embeddings \code{Ytrain}, then for \emph{new} data
-\code{Xtest}, you project them using the learned \code{P}, and perform a \strong{1-nearest neighbor}
-search in the low-dimensional subspace using \pkg{Rnanoflann}.
+After you have fit the DGPAGE model to some labeled training data, store the
+training labels on the model (\code{model$ytrain <- y}). For \emph{new} data
+\code{Xtest}, this function projects both training and test data using the
+learned \code{P} and performs a k-nearest-neighbor search in the
+low-dimensional subspace using \pkg{Rnanoflann}.
 }
 \examples{
 \dontrun{
-  # Suppose we already fit a model:
-  # model$Ytrain <- t(model$P) \%*\% model$Z  # r x n -> we store its transpose below
-  # model$Ytrain_t <- t(model$Ytrain)       # n x r
-  # model$ytrain  <- y  # training labels
-  #
-  # Now we get new data Xtest:
+  model <- dgpage_fit(Xtrain, S, D, r = 2)
+  model$ytrain <- ytrain
   preds <- dgpage_predict(model, Xtest)
 }
 }

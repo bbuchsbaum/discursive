@@ -2,23 +2,28 @@
 % Please edit documentation in R/allda.R
 \name{apply_pca}
 \alias{apply_pca}
-\title{Apply PCA for Null Space Removal}
+\title{Apply PCA for Preprocessing (e.g., Null Space Removal)}
 \usage{
 apply_pca(X, var_retained = 0.95)
 }
 \arguments{
-\item{X}{Data matrix of size n x d (n samples, d features).}
+\item{X}{A numeric matrix or data frame of size n x d (n samples, d features).}
 
-\item{var_retained}{Proportion of variance to retain (default is 0.95).}
+\item{var_retained}{The minimum proportion of variance to retain (numeric, default is 0.95).
+Must be finite and between 0 and 1.}
 }
 \value{
 A list containing:
-\item{X_pca}{The transformed data matrix after PCA (n x d_pca).}
-\item{rot}{The PCA rotation/loadings matrix (d x d_pca).}
-\item{fit}{The PCA fit object from \code{multivarious::pca}.}
+\item{X_pca}{The transformed data matrix after PCA (n x d_pca), where d_pca is
+the number of components retained.}
+\item{rot}{The PCA rotation (loadings) matrix (d x d_pca) that transforms
+the original features to the principal components.}
+\item{fit}{The original PCA fit object obtained from \code{multivarious::pca}.}
 }
 \description{
-Preprocess the data matrix to remove the null space using PCA
-and retain a number of principal components that explain at least
-\code{var_retained} proportion of variance.
+Preprocesses the data matrix using Principal Component Analysis (PCA).
+Retains a specified number of principal components, ensuring that at least
+\code{var_retained} proportion of the total variance is captured. This step can
+help reduce dimensionality and remove potential null space issues.
 }
+\keyword{internal}

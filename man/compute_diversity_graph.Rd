@@ -9,7 +9,8 @@ compute_diversity_graph(X, y)
 \arguments{
 \item{X}{A numeric matrix of size \eqn{n \times d}.}
 
-\item{y}{A length-\eqn{n} vector/factor of class labels.}
+\item{y}{A length-\eqn{n} vector/factor of class labels. Each class must have
+at least two members.}
 }
 \value{
 An \eqn{n \times n} matrix \eqn{D}.
@@ -25,9 +26,4 @@ matrix \eqn{D} is:
   \end{cases}
 }
 where \eqn{\rho_i^+} and \eqn{\rho_i^-} follow Eqs. (5) and (6) \strong{but} with \eqn{q=0}.
-}
-\details{
-All pairwise distances are computed explicitly, leading to an
-\eqn{O(n^2)} algorithm. Large datasets may require a more efficient
-implementation.
 }

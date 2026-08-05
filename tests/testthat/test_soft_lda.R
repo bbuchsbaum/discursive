@@ -1,3 +1,8 @@
+soft_lda_projection_matrix <- function(v) {
+  q <- qr.Q(qr(v))
+  tcrossprod(q)
+}
+
 soft_lda_fixture <- function() {
   X <- rbind(
     c(-2.0, 0.2, 1.0), c(-1.2, -0.3, 0.7), c(-0.8, 0.4, 1.2),
@@ -69,7 +74,7 @@ em_test_crisp_labels <- function(y, K = max(y)) {
 test_that("the projection and evidential-EM soft-label APIs are distinct", {
   expect_true(is.function(soft_lda))
   expect_true(is.function(em_soft_lda))
-  expect_true("y" %in% names(formals(soft_lda)))
+  expect_true("C" %in% names(formals(soft_lda)))
   expect_true("PL" %in% names(formals(em_soft_lda)))
 
   dat <- soft_lda_fixture()
@@ -81,6 +86,87 @@ test_that("the projection and evidential-EM soft-label APIs are distinct", {
   )
   expect_equal(rowSums(fit$zeta), rep(1, nrow(dat$X)), tolerance = 1e-10)
   expect_true(all(is.finite(fit$Sigma)))
+})
+
+test_that("SL-LDA scatter matrices match the dense E/F/G definitions", {
+  dat <- soft_lda_fixture()
+  alpha <- 0.2
+  fit <- soft_lda(dat$X, dat$C, dp = 3, di = 3, dl = 2, alpha = alpha)
+
+  Xc <- sweep(dat$X, 2L, fit$pca_center, FUN = "-")
+  Z <- Xc %*% fit$pca_vectors
+  F <- t(dat$C)
+  E <- diag(rowSums(dat$C))
+  Ginv <- diag(1 / colSums(dat$C))
+  within_operator <- E - t(F) %*% Ginv %*% F
+  between_operator <- t(F) %*% Ginv %*% F -
+    E %*% matrix(1, nrow(dat$X), nrow(dat$X)) %*% E / sum(E)
+  Sw <- crossprod(Z, within_operator %*% Z)
+  Sb <- crossprod(Z, between_operator %*% Z)
+
+  expect_equal(fit$within_scatter, Sw, tolerance = 1e-10)
+  expect_equal(fit$between_scatter, Sb, tolerance = 1e-10)
+
+  W <- crossprod(fit$pca_vectors, fit$v)
+  for (j in seq_len(ncol(W))) {
+    residual <- Sb %*% W[, j] -
+      fit$eigenvalues[j] * (Sw + alpha * diag(3)) %*% W[, j]
+    expect_lt(sqrt(sum(residual^2)), 1e-8)
+  }
+})
+
+test_that("SL-LDA selects the largest positive within-class modes", {
+  dat <- soft_lda_fixture()
+  fit <- soft_lda(dat$X, dat$C, dp = 3, di = 2, dl = 2, alpha = 0.1)
+  expected <- eigen(
+    fit$within_scatter + 0.1 * diag(3), symmetric = TRUE,
+    only.values = TRUE
+  )$values[1:2]
+
+  expect_equal(fit$within_eigenvalues, expected, tolerance = 1e-12)
+  expect_true(all(diff(fit$within_eigenvalues) <= 0))
+  expect_equal(multivarious::project(fit, dat$X), fit$s, tolerance = 1e-12)
+  expect_identical(levels(fit$labels), colnames(dat$C))
+})
+
+test_that("SL-LDA is invariant to common membership scaling and translation", {
+  dat <- soft_lda_fixture()
+  fit <- soft_lda(dat$X, dat$C, dp = 3, di = 3, dl = 2, alpha = 0)
+  scaled <- soft_lda(dat$X, 7 * dat$C, dp = 3, di = 3, dl = 2, alpha = 0)
+  shift <- c(100, -50, 25)
+  shifted_X <- sweep(dat$X, 2L, shift, FUN = "+")
+  shifted <- soft_lda(shifted_X, dat$C, dp = 3, di = 3, dl = 2, alpha = 0)
+
+  expect_equal(
+    soft_lda_projection_matrix(fit$v),
+    soft_lda_projection_matrix(scaled$v), tolerance = 1e-9
+  )
+  expect_equal(fit$eigenvalues, scaled$eigenvalues, tolerance = 1e-10)
+  expect_equal(
+    soft_lda_projection_matrix(fit$v),
+    soft_lda_projection_matrix(shifted$v), tolerance = 1e-9
+  )
+  expect_equal(as.matrix(dist(fit$s)), as.matrix(dist(shifted$s)), tolerance = 1e-9)
+})
+
+test_that("SL-LDA does not use RNG and validates membership contracts", {
+  dat <- soft_lda_fixture()
+  set.seed(902)
+  before <- .Random.seed
+  invisible(soft_lda(dat$X, dat$C, dl = 2))
+  expect_identical(.Random.seed, before)
+
+  C <- dat$C
+  C[1, ] <- 0
+  expect_error(soft_lda(dat$X, C), "Every row")
+  C <- dat$C
+  C[, 3] <- 0
+  expect_error(soft_lda(dat$X, C), "Every column")
+  C <- dat$C
+  C[1, 1] <- -1
+  expect_error(soft_lda(dat$X, C), "nonnegative")
+  expect_error(soft_lda(dat$X, dat$C, dp = 1.5), "integer")
+  expect_error(soft_lda(dat$X, dat$C, tol = 0), "tol")
 })
 
 test_that("evidential LDA matches the crisp-label maximum-likelihood oracle", {

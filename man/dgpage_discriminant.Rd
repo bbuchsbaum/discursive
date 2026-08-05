@@ -14,9 +14,11 @@ dgpage_discriminant(
   beta = 1e-05,
   maxiter = 20,
   tol = 1e-05,
-  verbose = TRUE,
+  verbose = FALSE,
+  seed = NULL,
   q = 1.5,
-  seed = NULL
+  ridge = 1e-08,
+  rank_tol = NULL
 )
 }
 \arguments{
@@ -30,14 +32,14 @@ dgpage_discriminant(
 
 \item{r}{The target dimension (number of discriminant directions).}
 
-\item{alpha, beta}{Hyperparameters in Eq. (12).}
+\item{alpha, beta}{Hyperparameters in Eq. (12). \code{alpha} must be positive,
+\code{beta} must be non-negative, and \code{alpha + beta < 1}.}
 
-\item{maxiter, tol, verbose}{Passed to \code{\link{dgpage_fit}}.}
+\item{maxiter, tol, verbose, seed, ridge, rank_tol}{Passed to
+\code{\link{dgpage_fit}}.}
 
 \item{q}{If \code{S} or \code{D} is \code{NULL}, we use \code{q} in
 \code{\link{compute_similarity_graph}}. Default 1.5.}
-
-\item{seed}{Optional seed passed to \code{dgpage_fit} for reproducibility.}
 }
 \value{
 An object of class \code{c("dgpage_projector","discriminant_projector","bi_projector",...)}
@@ -49,6 +51,13 @@ containing:
 \item \code{labels}   : the training labels
 \item \code{W}        : the learned n x n adjacency graph
 \item \code{objective}: final objective value
+\item \code{obj_trace}: objective value after each iteration
+\item \code{converged}: whether the relative objective change was below \code{tol}
+\item \code{final_rel_change}: final relative objective change
+\item \code{optimization_rank}: numerical row-space rank used by the solver
+\item \code{requested_r,effective_r}: requested and fitted dimensions
+\item \code{ridge,ridge_effective}: requested multiplier and normalized
+row-space ridge
 \item \code{alpha,beta} : stored hyperparameters
 }
 }
@@ -73,9 +82,6 @@ and projection matrix \code{P}.
 }
 We store \code{W} and other metadata in the returned object.
 }
-
-\strong{NOTE}: The \code{dgpage_predict} for 1-NN classification can now be replaced by
-a new S3 \code{predict} method that lives under \code{dgpage_projector}.
 }
 \examples{
 \dontrun{

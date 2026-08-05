@@ -2,103 +2,58 @@
 % Please edit documentation in R/trace_ratio.R
 \name{trace_ratio}
 \alias{trace_ratio}
-\title{Trace Ratio Optimization Returning a Discriminant Projector}
+\title{Trace-Ratio Subspace Optimization}
 \usage{
 trace_ratio(A, B, X = NULL, y = NULL, ncomp = 2, eps = 1e-06, maxiter = 100)
 }
 \arguments{
-\item{A}{A symmetric numeric matrix representing the "numerator" scatter matrix.}
+\item{A}{Symmetric finite numeric numerator matrix.}
 
-\item{B}{A symmetric numeric matrix representing the "denominator" scatter matrix.}
+\item{B}{Symmetric finite positive-semidefinite denominator matrix. It must
+yield a positive trace on every iterate used by the solver.}
 
-\item{X}{(optional) A numeric matrix \eqn{(n \times d)} of the original data.
-If provided, we compute the training scores \eqn{X \times V} in the final projector.}
+\item{X}{Optional numeric training matrix with \code{nrow(A)} features.}
 
-\item{y}{(optional) A vector of length \eqn{n} of class labels. If provided, stored in
-the projector's \code{labels} field.}
+\item{y}{Optional labels, one per row of \code{X}. When omitted, a single
+\code{"unlabeled"} level is stored because discriminant projectors require one
+label per training score.}
 
-\item{ncomp}{An integer specifying the number of components (dimension of the
-subspace) to extract. Default is 2.}
+\item{ncomp}{Positive integer number of orthonormal components.}
 
-\item{eps}{A numeric tolerance for convergence. The iterative procedure stops if
-the change in the trace ratio (\eqn{\rho}) is less than \code{eps}. Default is 1e-6.}
+\item{eps}{Positive relative convergence tolerance.}
 
-\item{maxiter}{An integer specifying the maximum number of iterations for the
-optimization. Default is 100.}
+\item{maxiter}{Positive integer maximum number of trace-ratio iterations.}
 }
 \value{
-A \code{\link[multivarious]{discriminant_projector}} object, with:
-\itemize{
-\item \code{v}: A matrix whose columns are the \eqn{ncomp} vectors
-corresponding to the subspace that maximizes the trace ratio criterion.
-\item \code{s}: If \code{X} is given, the training scores (\eqn{X \times v}).
-\item \code{sdev}: The standard deviations of columns in \code{s}.
-\item \code{labels}: set to \code{y} if provided, otherwise \code{NULL}.
-\item \code{classes}: A character string \code{"trace_ratio"}.
-}
+A \code{\link[multivarious:discriminant_projector]{multivarious::discriminant_projector()}} with class
+\code{"trace_ratio"}. Additional fields include \code{value}, \code{history},
+\code{iterations}, and \code{converged}.
 }
 \description{
-This function performs trace ratio optimization, a technique commonly used in
-dimensionality reduction and feature extraction problems such as those found in
-discriminant analysis. The trace ratio criterion seeks a subspace that maximizes
-the ratio of the trace of one scatter matrix (\code{A}) to another (\code{B}).
+Finds an orthonormal basis that maximizes the ratio of traces
+\deqn{\mathrm{tr}(V^T A V) / \mathrm{tr}(V^T B V).}
+The returned object is a multivarious discriminant projector so an
+optional training matrix can be retained and projected coherently.
 }
 \details{
-Formally, given two symmetric matrices \eqn{A} and \eqn{B}, we want to find a
-projection matrix \eqn{V} (with orthonormal columns) that maximizes:
-\deqn{\mathrm{trace}(V^T A V) / \mathrm{trace}(V^T B V).}
-This is solved iteratively using eigen decomposition methods.
-
-\strong{What if you want a \code{discriminant_projector} for typical usage?}
-If you provide \code{X} (the original data) and optional \code{y} (class labels),
-this function will build a \code{discriminant_projector} object, storing:
-\itemize{
-\item \code{v} ~ the \eqn{n x p} projection vectors (the subspace),
-\item \code{s} ~ the training scores (\eqn{X \times v}),
-\item \code{sdev} ~ standard deviations of each dimension in \code{s},
-\item \code{labels} ~ set to \code{y} if provided,
-\item \code{classes} ~ set to \code{"trace_ratio"}.
-}
-If \code{X} is \code{NULL}, we just return a projector with \code{v} but no training scores.
-
-This function solves a generalized eigenvalue-like problem iteratively, updating
-the projection \eqn{V} until convergence. It uses \code{PRIMME::eigs_sym} for
-eigen decompositions at each step. The approach is inspired by the trace ratio
-criterion found in linear discriminant analysis and related dimension reduction
-techniques.
-
-\strong{Algorithm}:
-\enumerate{
-\item Initialize \eqn{V} randomly (size \eqn{n \times ncomp}).
-\item At iteration \eqn{t}:
-\itemize{
-\item Compute \eqn{\rho_t = trace(V^T A V) / trace(V^T B V)}.
-\item Form \eqn{M = A - \rho_t B}.
-\item Eigen-decompose \eqn{M} to get top \eqn{ncomp} eigenvectors => new \eqn{V}.
-}
-\item Repeat until \eqn{|\rho_{t+1} - \rho_t| < eps} or maxiter is reached.
-}
+At each iteration the solver takes the leading eigenvectors of
+\eqn{A-\rho B} and updates
+\deqn{\rho = \frac{\sum_j v_j^T A v_j}
+                   {\sum_j v_j^T B v_j}.}
+This is a ratio of traces. It is not the sum of the componentwise Rayleigh
+quotients. The eigensolver and initialization are deterministic and this
+function neither reads from nor changes R's random-number stream.
 }
 \examples{
-\dontrun{
-data(iris)
-X <- scale(iris[,1:4])
-y <- iris[,5]
-
-# Build scatter matrices (a typical case in LDA)
-A <- between_class_scatter(X, y)
-B <- within_class_scatter(X, y)
-
-# Solve trace ratio with 3 components, storing training scores
-proj <- trace_ratio(A, B, X = X, y = y, ncomp = 3)
-print(proj)
-
-# You can now project new data with project(proj, newdata), etc.
+A <- diag(c(9, 8, 1))
+B <- diag(c(1, 4, 1))
+fit <- trace_ratio(A, B, ncomp = 2)
+fit$value
 }
-
+\references{
+Wang, H., Yan, S., Xu, D., Tang, X., and Huang, T. (2007). Trace ratio vs.
+ratio trace for dimensionality reduction. \emph{Proceedings of CVPR}, 1--8.
 }
 \seealso{
-\code{\link[PRIMME]{eigs_sym}} for the eigen decomposition solver,
-and \code{\link{between_class_scatter}}, \code{\link{within_class_scatter}}
-for common scatter matrices used in discriminant analysis.
+\code{\link[=solde_tr]{solde_tr()}}
 }

@@ -1,22 +1,10 @@
-#' discursive: Graph-Based Discriminant Analysis
+#' discursive: Discriminant and Dimension Reduction Methods
 #'
-#' Implements discriminant analysis algorithms including DGPAGE and
-#' several orthogonal LDA variants. Provides utilities for building
-#' similarity and diversity graphs as well as Rcpp-based scatter
-#' computations.
+#' The discursive package provides implementations of discriminant analysis
+#' and dimension-reduction methods, including classical and modern approaches,
+#' for use within the multivarious framework.
 #'
-#' @section Main Functions:
-#' \itemize{
-#'   \item \code{\link{dgpage_discriminant}}: fit the DGPAGE model.
-#'   \item \code{\link{dgpage_predict}}: predict new observations.
-#' }
-#'
-#' @docType package
-#' @name discursive
-#' @aliases discursive-package
-"_PACKAGE"
-
-## usethis namespace: start
+#' @keywords internal
+#' @importFrom stats coefficients cov dist kmeans predict rnorm sd
 #' @useDynLib discursive, .registration = TRUE
-## usethis namespace: end
-NULL
+"_PACKAGE"

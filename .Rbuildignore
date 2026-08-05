@@ -1,2 +1,12 @@
 ^.*\.Rproj$
 ^\.Rproj\.user$
+^\.git$
+^\.DS_Store$
+^CRAN_guidance\.md$
+^experimental$
+^extract_macros\.py$
+^extract_macros2\.py$
+^repomix-output\.xml$
+^man/macros(/.*)?$
+^\.rcmdcheck_result\.rds$
+^\.omc(/.*)?$

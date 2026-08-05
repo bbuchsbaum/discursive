@@ -2,7 +2,7 @@
 % Please edit documentation in R/wMLDA.R
 \name{wMLDA}
 \alias{wMLDA}
-\title{Weighted Multi-label Linear Discriminant Analysis (wMLDA)}
+\title{Weighted Multi-label Linear Discriminant Analysis}
 \usage{
 wMLDA(
   X,
@@ -14,77 +14,109 @@ wMLDA(
   max_iter_dep = 100,
   preproc = multivarious::center(),
   reg = 1e-09,
-  seed = NULL
+  seed = NULL,
+  tol = 1e-06
 )
 }
 \arguments{
-\item{X}{A numeric matrix or data frame of size n x d, where n is the number of samples and d is the number of features.}
+\item{X}{Numeric matrix or data frame with samples in rows and features in
+columns.}
 
-\item{Y}{A binary label matrix of size n x q, where Y\link{i, k} = 1 if sample i has label k, and 0 otherwise.}
+\item{Y}{Binary numeric or logical matrix with one row per sample and one
+column per label. Every sample must have at least one label and every label
+must occur at least once.}
 
-\item{weight_method}{A character string specifying the weight form to use. One of:
-\itemize{
-\item "binary": Each relevant label gets weight 1, potentially over-counting for multi-label instances.
-\item "correlation": Uses global label correlation to determine weights, possibly assigning positive weights to irrelevant labels.
-\item "entropy": Weights are the reciprocal of the number of relevant labels, distributing weights evenly among relevant labels.
-\item "fuzzy": A fuzzy membership approach that uses both label and feature information.
-\item "dependence": A dependence-based form using Hilbert-Schmidt independence criterion (HSIC) and random block coordinate descent.
-}}
+\item{weight_method}{Weighting strategy. One of \code{"binary"}, \code{"correlation"},
+\code{"entropy"}, \code{"fuzzy"}, or \code{"dependence"}.}
 
-\item{ncomp}{The number of components (dimensions) to extract. Must be \eqn{\leq q-1}. Defaults to \code{q - 1}.}
+\item{ncomp}{Optional positive integer giving the number of discriminant
+components. The default uses the positive numerical between-label rank,
+bounded by \code{ncol(Y) - 1}.}
 
-\item{max_iter_fuzzy}{Maximum number of iterations for the fuzzy method. Default 100.}
+\item{max_iter_fuzzy}{Maximum number of fuzzy-weight updates.}
 
-\item{tol_fuzzy}{Convergence tolerance for the fuzzy method. Default 1e-6.}
+\item{tol_fuzzy}{Positive convergence tolerance for fuzzy weights.}
 
-\item{max_iter_dep}{Maximum number of epochs for the dependence-based RBCDM method. Default 100.}
+\item{max_iter_dep}{Maximum number of randomized coordinate-descent epochs
+for dependence weights.}
 
-\item{preproc}{A preprocessing step from \code{multivarious}, e.g. \code{center()} or \code{scale()}. Defaults to \code{center()}.}
+\item{preproc}{A preprocessing specification from \pkg{multivarious}. The
+default centers the predictors.}
 
-\item{reg}{A small regularization value added to \code{Sw} to ensure invertibility. Default 1e-9.}
+\item{reg}{Nonnegative relative ridge coefficient for the within-label
+scatter. The actual ridge is \code{reg} times a data-dependent scatter scale.}
 
-\item{seed}{Random seed for reproducibility. Default NULL (no setting of seed).}
+\item{seed}{Optional nonnegative integer seed used by dependence weighting.
+The caller's random-number-generator state is restored after fitting.}
+
+\item{tol}{Relative numerical-rank tolerance in \verb{(0, 1)} for the final
+between-label eigenspectrum.}
 }
 \value{
-A \code{discriminant_projector} object containing:
-\item{rotation}{The projection matrix (d x ncomp) mapping original features into discriminant space.}
-\item{s}{The projected scores of the training data (n x ncomp).}
-\item{sdev}{Standard deviations of the scores.}
-\item{labels}{The class (label) information.}
-\item{preproc}{The preprocessing object.}
-\item{classes}{The string "wMLDA".}
+A \code{\link[multivarious:discriminant_projector]{multivarious::discriminant_projector()}} with class \code{"wMLDA"}.
+In addition to the standard projector fields, it contains:
+\describe{
+\item{eigenvalues}{Generalized eigenvalues of the returned directions.}
+\item{weights}{The fitted sample-by-label weight matrix.}
+\item{label_matrix}{The complete binary training label matrix.}
+\item{weight_method}{The selected weighting strategy.}
+\item{ncomp, active_labels}{The fitted dimension and labels with
+positive fitted total weight.}
+\item{class_weights, instance_weights, total_weight}{Weight totals used
+to construct the scatters.}
+\item{between_rank, denominator_rank}{Numerical ranks diagnosed by the
+generalized eigensolver.}
+\item{ridge, reg, tol}{The fitted ridge and numerical controls.}
+\item{weight_iterations, weight_converged}{Weight-optimization
+diagnostics.}
+}
 }
 \description{
-This function implements the Weighted Multi-label Linear Discriminant Analysis (wMLDA)
-framework as described in the paper "A weighted linear discriminant analysis framework
-for multi-label feature extraction" by Jianhua Xu et al. The wMLDA framework unifies several
-weight forms for multi-label LDA, including binary, correlation, entropy, fuzzy, and dependence-based
-weighting. Each weighting strategy determines how much each instance contributes
-to each label, which in turn defines the between-class and within-class scatter matrices.
+Fits the weighted multi-label LDA (wMLDA) framework of Xu (2018). A label
+weight matrix is estimated using one of five strategies, then used to form
+weighted within- and between-label scatter matrices. The generalized
+eigenproblem is solved by symmetric whitening.
 }
 \details{
-The final result is returned as a \code{discriminant_projector} object from the \code{multivarious} package,
-which can be integrated into downstream analytical workflows (e.g. applying the projection to new data).
+If \code{W} is the sample-by-label weight matrix, let \code{m} contain its row sums,
+\code{n_k} its column sums, and \verb{A = W diag(n_k^(-1/2))}. With preprocessed data
+\code{X}, wMLDA uses
+\deqn{S_w = X^T [diag(m) - A A^T] X / n_w}
+and
+\deqn{S_b = X^T [A A^T - m m^T / n_w] X / n_w,}
+where \code{n_w = sum(m)}. The implementation evaluates these expressions using
+feature-by-label cross-products, without materializing dense sample-by-sample
+scatter operators.
+
+The returned directions \code{V} solve
+\deqn{S_b V = (S_w + r I) V Lambda,}
+where \code{r} is the fitted relative ridge. They are normalized so that
+\verb{t(V) (S_w + r I) V} is the identity, up to numerical precision.
+
+\code{labels} in the returned projector is the label with the largest fitted
+weight for each training row. It is only a single-label adapter required by
+the projector interface; \code{label_matrix} retains the full multi-label target.
+
+Dependence weighting uses the centered linear-kernel HSIC objective and a
+randomized, discrete coordinate update over each sample's relevant labels.
+It requires an \code{n}-by-\code{n} kernel matrix and therefore uses quadratic memory.
 }
 \examples{
-\dontrun{
-library(multivarious)
-set.seed(123)
-X <- matrix(rnorm(100*5), nrow=100, ncol=5)
-# Suppose we have 3 labels:
-Y <- matrix(0, nrow=100, ncol=3)
-# Assign random labels:
-for (i in 1:100) {
-  lab_count <- sample(1:3, 1)
-  chosen <- sample(1:3, lab_count)
-  Y[i, chosen] <- 1
-}
-
-res <- wMLDA(X, Y, weight_method="entropy", ncomp=2)
-str(res)
-}
+X <- as.matrix(iris[, 1:4])
+Y <- cbind(
+  setosa = iris$Species == "setosa",
+  versicolor = iris$Species == "versicolor",
+  virginica = iris$Species == "virginica",
+  wide_sepal = iris$Sepal.Width > median(iris$Sepal.Width)
+)
+fit <- wMLDA(X, Y, weight_method = "entropy", ncomp = 2)
+multivarious::project(fit, X[1:5, , drop = FALSE])
 }
 \references{
-Xu, J. "A weighted linear discriminant analysis framework for multi-label feature extraction."
-Knowledge-Based Systems, Volume 131, 2017, Pages 1-13.
+Xu, J. (2018). A weighted linear discriminant analysis framework for
+multi-label feature extraction. \emph{Neurocomputing}, 275, 107--120.
+\doi{10.1016/j.neucom.2017.05.008}
+}
+\seealso{
+\code{\link[multivarious:discriminant_projector]{multivarious::discriminant_projector()}}
 }

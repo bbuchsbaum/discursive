@@ -2,23 +2,23 @@
 % Please edit documentation in R/scatter.R
 \name{binary_between_scatter}
 \alias{binary_between_scatter}
-\title{Calculate Binary Between-Class Scatter Matrix}
+\title{Calculate binary between-class scatter}
 \usage{
 binary_between_scatter(X, id1, id2)
 }
 \arguments{
-\item{X}{A numeric matrix (n x d).}
+\item{X}{A numeric matrix with samples in rows and features in columns.}
 
-\item{id1}{A vector of indices for the first group.}
+\item{id1}{Positive integer indices or a logical vector selecting group one.}
 
-\item{id2}{A vector of indices for the second group.}
+\item{id2}{Positive integer indices or a logical vector selecting group two.}
 }
 \value{
-A numeric (d x d) between-class scatter matrix for the two groups.
+A numeric feature-by-feature between-class scatter matrix.
 }
 \description{
-For two distinct groups within a dataset, this computes:
-\deqn{S_b = n_1 (m_1 - m)(m_1 - m)^T + n_2 (m_2 - m)(m_2 - m)^T}
-where \(m_1\) and \(m_2\) are the class means and \(m\) is the mean of both groups combined.
+For two disjoint, non-empty groups, computes the equivalent rank-one form
+\deqn{S_b = \frac{n_1 n_2}{n_1 + n_2}
+(\bar{x}_1 - \bar{x}_2)(\bar{x}_1 - \bar{x}_2)^T.}
 }
 \keyword{internal}

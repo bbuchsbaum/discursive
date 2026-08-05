@@ -1,145 +1,254 @@
 #' Compute Weighted Group Means
 #'
-#' Given a data matrix `X` (`n x d`) and a class-weight matrix `F`
-#' (`c x n`), computes the weighted means of `X` for each class. Each
-#' sample contributes to each class's mean according to its weight.
+#' Computes one feature mean per row of a class-by-observation weight matrix.
 #'
-#' @param X A numeric matrix of shape `n x d`. Coerced via `as.matrix()` if
-#'   needed.
-#' @param F A numeric matrix of shape `c x n`. `F[i, j]` is the weight of
-#'   sample `j` for class `i`. Each row must have a positive sum.
+#' @param X Numeric matrix with observations in rows and features in columns.
+#' @param F Nonnegative class-by-observation weight matrix. Every row must
+#'   have positive mass.
 #'
-#' @return A numeric matrix of shape `c x d`.
-#'
-#' @examples
-#' X <- matrix(1:10, nrow = 5, ncol = 2)
-#' F <- matrix(runif(3*5), nrow = 3)
-#' weighted_group_means(X, F)
-#'
+#' @return A class-by-feature matrix of weighted means.
 #' @export
 weighted_group_means <- function(X, F) {
-  if (!is.matrix(X)) X <- as.matrix(X)
-  if (!is.matrix(F)) F <- as.matrix(F)
-
-  row_sums_F <- rowSums(F)
-  if (any(row_sums_F <= 0)) {
-    stop("Each row of F must have a positive sum of weights (>=1 sample).")
+  X <- as.matrix(X)
+  F <- as.matrix(F)
+  if (!is.numeric(X) || !is.numeric(F) || ncol(F) != nrow(X)) {
+    stop("'X' and 'F' must be numeric matrices with ncol(F) equal to nrow(X).")
+  }
+  if (any(!is.finite(X)) || any(!is.finite(F)) || any(F < 0)) {
+    stop("'X' must be finite and 'F' must contain finite nonnegative weights.")
+  }
+  weight_sums <- rowSums(F)
+  if (any(weight_sums <= 0)) {
+    stop("Each row of 'F' must have positive weight mass.")
   }
 
-  ret <- F %*% X
-  ret <- sweep(ret, 1, row_sums_F, "/")
-
-  rownames(ret) <- rownames(F)
-  colnames(ret) <- colnames(X)
-  ret
+  means <- F %*% X
+  means <- sweep(means, 1L, weight_sums, FUN = "/")
+  rownames(means) <- rownames(F)
+  colnames(means) <- colnames(X)
+  means
 }
 
 
-#' Soft-Label Linear Discriminant Analysis (SL-LDA)
+#' Soft-Label Linear Discriminant Projection
 #'
-#' A soft-label variant of LDA following Zhao et al. (2014). Instead of hard
-#' (0/1) labels each sample carries fractional memberships across classes,
-#' encoded in a matrix `y` (also called `C`).
+#' Fits the SL-LDA projection of Zhao et al. (2014) from nonnegative soft
+#' class memberships. The estimator is distinct from [em_soft_lda()], which
+#' fits a Gaussian evidential-EM classifier.
 #'
-#' @param X A numeric matrix `n x d`.
-#' @param y A numeric matrix `n x c` of soft class memberships (`y[i, k]` is
-#'   the weight of sample `i` for class `k`). Must be non-negative. This was
-#'   called `C` in earlier versions.
-#' @param ncomp Integer. Final between-class projection dimension. Defaults
-#'   to `ncol(y) - 1`. Equivalent to `dl` in earlier versions.
-#' @param dp Integer. PCA dimension. Defaults to `min(dim(X))`.
-#' @param di Integer. Within-class subspace dimension. Defaults to `dp - 1`.
-#' @param alpha Numeric (`>= 0`) ridge added to the soft within-class scatter
-#'   for invertibility. Default `0`.
-#' @param preproc Preprocessing from `multivarious`. Defaults to
-#'   [multivarious::pass()] (no centering).
+#' @param X Numeric matrix or data frame with observations in rows and features
+#'   in columns.
+#' @param C Numeric membership matrix with one row per observation and at least
+#'   two class columns. Entries must be nonnegative; every row and column must
+#'   have positive mass.
+#' @param preproc A fitted or unfitted preprocessing specification from the
+#'   multivarious package. The default performs no preprocessing.
+#' @param dp Optional positive integer number of numerical principal components
+#'   to retain. The default uses all available nonzero components.
+#' @param di Optional positive integer number of within-class modes used for
+#'   whitening. The default uses the positive numerical rank.
+#' @param dl Optional positive integer number of discriminant components. The
+#'   default is limited by the positive between-class rank and `ncol(C) - 1`.
+#' @param alpha Nonnegative ridge added to the within-class scatter.
+#' @param tol Relative numerical-rank tolerance in `(0, 1)`.
 #'
-#' @return A `discriminant_projector` (subclass `"soft_lda"`).
+#' @return A [multivarious::discriminant_projector()] with class `"soft_lda"`.
+#'   It includes the complete `memberships`, selected `eigenvalues` and
+#'   `within_eigenvalues`, PCA diagnostics, soft scatter matrices, and the
+#'   dimensions `dp`, `di`, and `dl`.
 #'
-#' @references Zhao, M., Zhang, Z., Chow, T.W.S., & Li, B. (2014).
-#'   "A general soft label based Linear Discriminant Analysis for
-#'   semi-supervised dimensionality reduction." *Neurocomputing*, 135,
-#'   250–264.
+#' @details
+#' Let \eqn{F=C^T}, \eqn{E=\mathrm{diag}(C\mathbf{1})}, and
+#' \eqn{G=\mathrm{diag}(C^T\mathbf{1})}. In the PCA score space, this
+#' implementation forms
+#' \deqn{S_w = X^T(E-F^T G^{-1}F)X}
+#' and
+#' \deqn{S_b = X^T(F^T G^{-1}F -
+#' E\mathbf{1}\mathbf{1}^T E / \mathbf{1}^T E\mathbf{1})X.}
 #'
+#' The eigenvalue-selection convention is part of the contract: `di` retains
+#' the largest strictly positive eigenvalues of \eqn{S_w+\alpha I}, then
+#' whitens those modes. It does not select the smallest eigenvalues or implement
+#' null-space LDA. The final directions are the largest positive generalized
+#' eigenmodes of \eqn{S_b} relative to the retained within-class subspace.
+#'
+#' @references
+#' Zhao, M., Zhang, Z., Chow, T. W. S., and Li, B. (2014). A general soft
+#' label based Linear Discriminant Analysis for semi-supervised dimension
+#' reduction. *Neural Networks*, 55, 83--97.
+#'
+#' @seealso [em_soft_lda()], [pca_lda()]
+#' @importFrom multivarious pass fit transform
 #' @export
-soft_lda <- function(X, y,
-                     ncomp = ncol(y) - 1,
-                     dp = min(dim(X)),
-                     di = dp - 1,
-                     alpha = 0.0,
-                     preproc = multivarious::pass()) {
-
-  cl <- match.call()
-  C <- y
-  dl <- ncomp
-
-  if (!is.matrix(X)) stop("X must be a matrix.")
-  if (!is.matrix(C)) stop("y must be a matrix of soft membership weights.")
-  if (nrow(C) != nrow(X)) {
-    stop("y must have the same number of rows as X.")
+#'
+#' @examples
+#' X <- as.matrix(iris[, 1:4])
+#' C <- model.matrix(~ iris$Species - 1)
+#' fit <- soft_lda(X, C, dl = 2)
+#' multivarious::project(fit, X[1:5, , drop = FALSE])
+soft_lda <- function(X,
+                     C,
+                     preproc = pass(),
+                     dp = NULL,
+                     di = NULL,
+                     dl = NULL,
+                     alpha = 0,
+                     tol = 1e-6) {
+  X <- as.matrix(X)
+  if (!is.numeric(X) || length(dim(X)) != 2L || nrow(X) < 2L || ncol(X) < 1L) {
+    stop("'X' must be a numeric matrix with at least two rows and one column.")
   }
-  if (any(C < 0)) {
-    stop("All entries of 'y' must be non-negative (soft memberships).")
+  if (any(!is.finite(X))) {
+    stop("'X' must contain only finite values.")
+  }
+  if (!is.matrix(C) || !is.numeric(C) || nrow(C) != nrow(X) || ncol(C) < 2L) {
+    stop("'C' must be a numeric matrix with one row per observation and at least two columns.")
+  }
+  if (any(!is.finite(C)) || any(C < 0)) {
+    stop("'C' must contain only finite nonnegative memberships.")
   }
 
-  n <- nrow(X)
-  d <- ncol(X)
-  c <- ncol(C)
-
-  procres <- multivarious::prep(preproc)
-  Xp <- init_transform(procres, X)
-
-  pca_red <- multivarious::pca(Xp, ncomp = dp)
-  proj_dp <- pca_red$v
-  Xpca    <- scores(pca_red)
-
-  F <- t(C)
-  E <- Matrix::Diagonal(x = rowSums(C))
-  G <- diag(colSums(C))
-
-  e_vec <- rep(1, n)
-  denom <- as.numeric(t(e_vec) %*% diag(E) %*% e_vec)
-
-  Ft   <- t(F)
-  invG <- diag(1 / diag(G))
-  M_sw <- E - Ft %*% invG %*% F
-  M_sb <- Ft %*% invG %*% F - (E %*% tcrossprod(e_vec) %*% E) / denom
-
-  Sw_raw <- crossprod(Xpca, M_sw %*% Xpca)
-  Sw     <- Sw_raw + alpha * diag(dp)
-
-  if (di > dp) {
-    warning("di > dp is invalid; setting di = dp.")
-    di <- dp
+  row_mass <- rowSums(C)
+  class_mass <- colSums(C)
+  if (any(row_mass <= 0)) {
+    stop("Every row of 'C' must have positive membership mass.")
   }
-  if (di < 1) stop("di must be >= 1.")
-
-  E_i <- RSpectra::eigs_sym(Sw, k = di, which = "LM")
-  proj_di <- E_i$vectors %*% diag(1 / sqrt(E_i$values))
-
-  group_means_pca <- weighted_group_means(Xpca, F)
-  gm_proj <- group_means_pca %*% proj_di
-
-  if (dl > di) {
-    warning("ncomp > di is invalid; setting ncomp = di.")
-    dl <- di
+  if (any(class_mass <= 0)) {
+    stop("Every column of 'C' must have positive membership mass.")
   }
-  if (dl < 1) stop("ncomp must be >= 1.")
 
-  E_l <- multivarious::pca(gm_proj, ncomp = dl)
-  proj_dl <- E_l$v
+  tol <- .check_finite_scalar(
+    tol, "tol", lower = 0, upper = 1,
+    lower_open = TRUE, upper_open = TRUE
+  )
+  alpha <- .check_finite_scalar(alpha, "alpha", lower = 0)
+  max_pca_dimension <- min(ncol(X), nrow(X) - 1L)
+  if (!is.null(dp)) {
+    dp <- .check_whole_number(dp, "dp", lower = 1L, upper = max_pca_dimension)
+  }
 
-  proj_final <- proj_dp %*% proj_di %*% proj_dl
-  s_mat <- Xpca %*% proj_di %*% proj_dl
+  procres <- multivarious::fit(preproc, X)
+  Xp <- as.matrix(multivarious::transform(procres, X))
+  if (!is.numeric(Xp) || any(dim(Xp) != dim(X)) || any(!is.finite(Xp))) {
+    stop("'preproc' must produce a finite numeric matrix with the same dimensions as 'X'.")
+  }
+
+  pca_center <- colMeans(Xp)
+  centered <- sweep(Xp, 2L, pca_center, FUN = "-")
+  pca_svd <- svd(centered, nu = 0L, nv = min(dim(centered)))
+  pca_cutoff <- tol * max(pca_svd$d)
+  pca_rank <- sum(pca_svd$d > pca_cutoff)
+  if (pca_rank == 0L) {
+    stop("The preprocessed data have zero numerical PCA rank.")
+  }
+  if (is.null(dp)) {
+    dp <- pca_rank
+  } else if (dp > pca_rank) {
+    stop(sprintf("'dp' (%d) exceeds the numerical PCA rank (%d).", dp, pca_rank))
+  }
+  pca_vectors <- pca_svd$v[, seq_len(dp), drop = FALSE]
+  pca_scores <- centered %*% pca_vectors
+
+  # These reduced formulas are algebraically identical to the dense E/F/G
+  # scatter definitions but avoid materializing n-by-n matrices.
+  weighted_total <- crossprod(pca_scores, pca_scores * row_mass)
+  class_totals <- crossprod(C, pca_scores)
+  class_second <- crossprod(
+    sweep(class_totals, 1L, sqrt(class_mass), FUN = "/")
+  )
+  weighted_sum <- colSums(pca_scores * row_mass)
+  total_mass <- sum(row_mass)
+  within_scatter <- weighted_total - class_second
+  between_scatter <- class_second - tcrossprod(weighted_sum) / total_mass
+  within_scatter <- 0.5 * (within_scatter + t(within_scatter))
+  between_scatter <- 0.5 * (between_scatter + t(between_scatter))
+  regularized_within <- within_scatter + alpha * diag(dp)
+
+  within_decomp <- eigen(regularized_within, symmetric = TRUE)
+  within_max <- max(within_decomp$values)
+  if (!is.finite(within_max) || within_max <= 0) {
+    stop("The soft within-class scatter has no positive numerical rank.")
+  }
+  within_rank <- sum(within_decomp$values > tol * within_max)
+  if (is.null(di)) {
+    di <- within_rank
+  } else {
+    di <- .check_whole_number(di, "di", lower = 1L, upper = dp)
+    if (di > within_rank) {
+      stop(sprintf("'di' (%d) exceeds the positive within-class rank (%d).", di, within_rank))
+    }
+  }
+  within_values <- within_decomp$values[seq_len(di)]
+  whitening <- sweep(
+    within_decomp$vectors[, seq_len(di), drop = FALSE],
+    2L, sqrt(within_values), FUN = "/"
+  )
+
+  whitened_between <- crossprod(whitening, between_scatter %*% whitening)
+  whitened_between <- 0.5 * (whitened_between + t(whitened_between))
+  between_decomp <- eigen(whitened_between, symmetric = TRUE)
+  between_max <- max(between_decomp$values)
+  if (!is.finite(between_max) || between_max <= 0) {
+    stop("The soft class means have zero positive between-class scatter rank.")
+  }
+  between_rank <- sum(between_decomp$values > tol * between_max)
+  max_dl <- min(di, ncol(C) - 1L, between_rank)
+  if (is.null(dl)) {
+    dl <- max_dl
+  } else {
+    dl <- .check_whole_number(
+      dl, "dl", lower = 1L, upper = min(di, ncol(C) - 1L)
+    )
+    if (dl > between_rank) {
+      stop(sprintf("'dl' (%d) exceeds the positive between-class rank (%d).", dl, between_rank))
+    }
+  }
+
+  discriminant_pca <- whitening %*%
+    between_decomp$vectors[, seq_len(dl), drop = FALSE]
+  vectors <- pca_vectors %*% discriminant_pca
+  signs <- vapply(seq_len(dl), function(j) {
+    sign(vectors[which.max(abs(vectors[, j])), j])
+  }, numeric(1L))
+  signs[signs == 0] <- 1
+  vectors <- sweep(vectors, 2L, signs, FUN = "*")
+
+  component_names <- paste0("SLDA", seq_len(dl))
+  rownames(vectors) <- colnames(X)
+  colnames(vectors) <- component_names
+  scores <- Xp %*% vectors
+  colnames(scores) <- component_names
+  score_sdev <- apply(scores, 2L, stats::sd)
+  names(score_sdev) <- component_names
+
+  class_names <- colnames(C)
+  if (is.null(class_names)) class_names <- as.character(seq_len(ncol(C)))
+  labels <- factor(
+    class_names[max.col(C, ties.method = "first")], levels = class_names
+  )
 
   multivarious::discriminant_projector(
-    v       = proj_final,
-    s       = s_mat,
-    sdev    = apply(s_mat, 2, sd),
+    v = vectors,
+    s = scores,
+    sdev = score_sdev,
     preproc = procres,
-    labels  = colnames(C),
-    method  = "soft_lda",
-    call    = cl,
-    classes = "soft_lda"
+    labels = labels,
+    classes = "soft_lda",
+    memberships = C,
+    eigenvalues = between_decomp$values[seq_len(dl)],
+    within_eigenvalues = within_values,
+    pca_singular_values = pca_svd$d[seq_len(dp)],
+    within_scatter = within_scatter,
+    between_scatter = between_scatter,
+    pca_vectors = pca_vectors,
+    pca_center = pca_center,
+    dp = dp,
+    di = di,
+    dl = dl,
+    pca_rank = pca_rank,
+    within_rank = within_rank,
+    between_rank = between_rank,
+    alpha = alpha,
+    tol = tol
   )
 }

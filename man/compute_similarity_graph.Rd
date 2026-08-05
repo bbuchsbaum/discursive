@@ -9,9 +9,10 @@ compute_similarity_graph(X, y, q = 1.5)
 \arguments{
 \item{X}{A numeric matrix of size \eqn{n \times d}, where each of the \eqn{n} rows is one sample.}
 
-\item{y}{A length-\eqn{n} vector/factor of class labels.}
+\item{y}{A length-\eqn{n} vector/factor of class labels. Each class must have
+at least two members.}
 
-\item{q}{A positive exponent (see Eqs. (5) and (6)). Typical range is \link{1, 3}.}
+\item{q}{A positive exponent (see Eqs. (5) and (6)). Typical values are between 1 and 3.}
 }
 \value{
 An \eqn{n \times n} matrix \eqn{S}.
@@ -28,9 +29,4 @@ matrix \eqn{S} is computed as:
 }
 where \eqn{\tau_i^+} and \eqn{\tau_i^-} (Eqs. (5) and (6)) characterize the intra- and inter-class
 geometric distributions for sample \eqn{x_i}, respectively.
-}
-\details{
-This implementation materializes all pairwise distances and thus has
-\eqn{O(n^2)} computational complexity. For very large datasets you may
-want to implement a more efficient version, e.g., using Rcpp.
 }
